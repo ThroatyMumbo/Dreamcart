@@ -1,0 +1,70 @@
+; N64 cart AD bus master. AD0-15 = GP0-15 (out/in), side-set GP16 ALE_L, GP17 ALE_H, GP18 /RD, set pin GP19 /WR.
+; TX: control word (bit 31 = write, bits 30..0 = halfwords - 1), address, then for writes one word per halfword (low 16 bits).
+
+.program n64_bus
+.side_set 3
+
+.define public CYCLE_HZ 16000000
+
+.wrap_target
+idle:
+    pull block            side 6
+    out x, 1              side 6
+    out y, 31             side 6
+    pull block            side 6
+    mov pindirs, ~null    side 7
+    out pins, 16          side 7 [3]   ; address high half while ALE_H is still high
+    nop                   side 5 [3]   ; ALE_H falls and latches it; 250 ns setup and hold, X7 mislatches at 125
+    out pins, 16          side 5 [3]   ; address low half
+    nop                   side 4 [3]   ; ALE_L falls and latches it
+    jmp !x read           side 4
+    mov pindirs, null     side 4
+    set x, 15             side 4
+write_settle:
+    jmp x-- write_settle  side 4 [1]   ; 2 us, as the ROM needs after the latch
+    mov pindirs, ~null    side 4
+write_word:
+    pull block            side 4
+    out null, 16          side 4       ; a 16-bit DMA write lands in the low half
+    out pins, 16          side 4 [1]
+    set pins, 0           side 4 [3]   ; /WR low ~310 ns
+    nop                   side 4
+    set pins, 1           side 4 [1]
+    jmp y-- write_word    side 4
+    mov pindirs, null     side 4
+    jmp idle              side 6
+read:
+    mov pindirs, null     side 4
+    set x, 15             side 4
+read_settle:
+    jmp x-- read_settle   side 4 [1]   ; 2 us setup; without it the first word of a block corrupts
+read_word:
+    nop                   side 0 [3]   ; /RD low ~310 ns
+    in pins, 16           side 0
+    jmp y-- read_word     side 4 [1]
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+// ctl_base is ALE_L; ALE_H, /RD and /WR follow it
+static inline void n64_bus_program_init(PIO pio, uint sm, uint offset, uint ad_base, uint ctl_base) {
+    pio_sm_config c = n64_bus_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, ad_base, 16);
+    sm_config_set_in_pins(&c, ad_base);
+    sm_config_set_sideset_pins(&c, ctl_base);
+    sm_config_set_set_pins(&c, ctl_base + 3, 1);
+    sm_config_set_out_shift(&c, false, false, 32);
+    sm_config_set_in_shift(&c, false, true, 16);
+    sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / n64_bus_CYCLE_HZ);
+
+    // idle: ALE_L low, ALE_H, /RD and /WR high; AD released
+    pio_sm_set_pins_with_mask(pio, sm, 0xEu << ctl_base, 0xFu << ctl_base);
+    pio_sm_set_pindirs_with_mask(pio, sm, 0xFu << ctl_base, (0xFFFFu << ad_base) | (0xFu << ctl_base));
+    for (uint pin = ad_base; pin < ad_base + 16; pin++) pio_gpio_init(pio, pin);
+    for (uint pin = ctl_base; pin < ctl_base + 4; pin++) pio_gpio_init(pio, pin);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

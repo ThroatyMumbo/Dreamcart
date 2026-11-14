@@ -1,0 +1,39 @@
+; Clocks the CIC handshake out: DCLK (side-set, GP22) low, sample DIO (GP23) while low, DCLK high.
+; TX: bit count - 1. RX: bits MSB-first, autopushed 32 at a time. 100 SM cycles = one DCLK half period.
+
+.program cic_read
+.side_set 1 opt
+
+    pull block
+    out y, 32
+next_bit:
+    set x, 31          side 0
+low:
+    jmp x-- low        [2]
+    nop                [1]
+    in pins, 1                  ; end of the low half: CIC sets the bit up on the falling edge
+    set x, 31          side 1
+high:
+    jmp x-- high       [2]
+    nop                [1]
+    jmp y-- next_bit
+park:
+    jmp park
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void cic_read_program_init(PIO pio, uint sm, uint offset, uint dclk, uint dio, uint32_t half_us) {
+    pio_sm_config c = cic_read_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, dclk);
+    sm_config_set_in_pins(&c, dio);
+    sm_config_set_in_shift(&c, false, true, 32);
+    sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) * half_us / 100e6f);
+    // latch DCLK high before the pin is handed over: a CIC waiting on DCLK takes a low glitch as bit 0's edge
+    pio_sm_set_pins_with_mask(pio, sm, 1u << dclk, 1u << dclk);
+    pio_sm_set_pindirs_with_mask(pio, sm, 1u << dclk, (1u << dclk) | (1u << dio));
+    pio_gpio_init(pio, dclk);
+    pio_gpio_init(pio, dio);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

@@ -1,0 +1,66 @@
+; SNES cart bus master. D0-7 = GP0-7, /RD /WR = GP8-9 (set), 595 chain SER/SRCLK/RCLK = GP18-20.
+; One byte per TX word: address << 8 (read) or address << 8 | data (write). BA7 shifts first, A0 last.
+
+; A stalled instruction keeps asserting its side-set, so the idle pulls carry none: snes_write would pin the chain low.
+.program snes_read
+.side_set 2 opt                     ; SRCLK, RCLK
+
+.wrap_target
+    pull block
+    set x, 23               side 0
+bit:
+    out pins, 1             side 0      ; SER
+    jmp x-- bit             side 1      ; SRCLK rises one cycle after SER settles
+    mov x, y                side 2      ; RCLK rises: the address reaches the cart
+    set pins, 2             side 0      ; /RD low
+access:
+    jmp x-- access          side 0      ; Y + 1 cycles; RCLK to sample is Y + 3
+    in pins, 8              side 0
+    set pins, 3             side 0      ; /RD high
+.wrap
+
+.program snes_write
+.side_set 3 opt                     ; SER, SRCLK, RCLK
+
+.wrap_target
+    pull block
+    set y, 23               side 0
+bit:
+    out x, 1                side 0
+    jmp !x ser_low          side 0
+    nop                     side 1      ; SER high
+    jmp y-- bit             side 3      ; SRCLK rises, SER held
+    jmp latch               side 1
+ser_low:
+    nop                     side 0
+    jmp y-- bit             side 2
+latch:
+    out pins, 8             side 4 [1]  ; RCLK rises and the data goes out
+    set pins, 1             side 0      ; /WR low
+    mov x, isr              side 0
+strobe:
+    jmp x-- strobe          side 0      ; ISR + 1 cycles; /WR low for ISR + 3
+    set pins, 3             side 0      ; /WR high
+.wrap
+
+% c-sdk {
+static inline void snes_read_program_init(PIO pio, uint sm, uint offset, uint d0, uint rd, uint ser) {
+    pio_sm_config c = snes_read_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, ser, 1);
+    sm_config_set_set_pins(&c, rd, 2);
+    sm_config_set_sideset_pins(&c, ser + 1);
+    sm_config_set_in_pins(&c, d0);
+    sm_config_set_out_shift(&c, false, false, 32);
+    sm_config_set_in_shift(&c, false, true, 8);
+    pio_sm_init(pio, sm, offset, &c);
+}
+
+static inline void snes_write_program_init(PIO pio, uint sm, uint offset, uint d0, uint rd, uint ser) {
+    pio_sm_config c = snes_write_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, d0, 8);
+    sm_config_set_set_pins(&c, rd, 2);
+    sm_config_set_sideset_pins(&c, ser);
+    sm_config_set_out_shift(&c, false, false, 32);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

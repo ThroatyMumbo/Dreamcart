@@ -1,0 +1,29 @@
+# Local crap and build artifacts
+.venv/
+.history/
+build/
+production/
+__pycache__/
+hardware/models/
+hardware/n64/shell/out/
+*.o
+*.elf
+*.lck
+
+# Local documentation and logs
+docs/
+carts/
+saves/
+dc/log/
+
+# Native ports
+sm64-cart/
+sm64-ref/
+mk64-cart/
+mk64-ref/
+
+# Other emulators
+daedalus/
+genesisplus-dc/
+super-famicast/
+frnes/

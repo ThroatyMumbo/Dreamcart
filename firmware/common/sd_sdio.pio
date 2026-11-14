@@ -1,0 +1,65 @@
+; 4-bit SD bus, from carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico src/sd_driver/SDIO/rp2040_sdio.pio; programs unchanged.
+
+.define D0 1
+.define D1 1
+.define PUBLIC CLKDIV D0 + 1 + D1 + 1           ; PIO cycles per SD clock
+
+.define PUBLIC SDIO_CLK_PIN_D0_OFFSET 30        ; CLK = D0 - 2, as a WAIT index mod 32
+
+; Free-running CLK by side-set, commands out and responses in on CMD.
+; TX: word 0 = bits - 1 << 24 | first 24 bits; word 1 = last 24 bits << 8 | response bits - 1 (0: none).
+.program sdio_cmd_clk
+    .side_set 1
+
+    mov OSR, NULL       side 1 [D1]
+wait_cmd:
+    mov Y, !STATUS      side 0 [D0]             ; STATUS: TX FIFO < 2
+    jmp !Y wait_cmd     side 1 [D1]
+load_cmd:
+    out NULL, 32        side 0 [D0]
+    out X, 8            side 1 [D1]
+    set pins, 1         side 0 [D0]
+    set pindirs, 1      side 1 [D1]
+send_cmd:
+    out pins, 1         side 0 [D0]
+    jmp X-- send_cmd    side 1 [D1]
+prep_resp:
+    set pindirs, 0      side 0 [D0]
+    out X, 8            side 1 [D1]
+    nop                 side 0 [D0]
+    jmp !X resp_done    side 1 [D1]
+wait_resp:
+    nop                  side 0 [D0]
+    jmp PIN wait_resp    side 1 [D1]
+read_resp:
+    in PINS, 1          side 0 [D0]             ; sampled as CLK falls, before the card sees it
+    jmp X-- read_resp   side 1 [D1]
+resp_done:
+    push                side 0 [D0]
+
+; Y = nibbles per block - 1 (data and CRC); waits for each block's start bit on D0.
+.program sdio_data_rx
+wait_start:
+    mov X, Y
+    wait 0 pin 0
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET  [CLKDIV-1]
+rx_data:
+    in PINS, 4                 [CLKDIV-2]
+    jmp X--, rx_data
+
+; X = nibbles - 1, Y = response bits - 1; pushes the D0 response once the card is idle.
+.program sdio_data_tx
+    wait 0 pin SDIO_CLK_PIN_D0_OFFSET
+    wait 1 pin SDIO_CLK_PIN_D0_OFFSET  [CLKDIV + D1 - 1]
+tx_loop:
+    out PINS, 4                [D0]
+    jmp X-- tx_loop            [D1]
+    set pindirs, 0x00          [D0]
+.wrap_target
+response_loop:
+    in PINS, 1                 [D1]
+    jmp Y--, response_loop     [D0]
+wait_idle:
+    wait 1 pin 0               [D1]
+    push                       [D0]
+.wrap

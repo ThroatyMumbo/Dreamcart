@@ -1,0 +1,67 @@
+; Mega Drive cart bus master. VD0-15 = GP0-15, /CE /OE /AS /ASEL = GP16-19, 595 chain SER/SRCLK/RCLK = GP20-22,
+; /LWR /UWR = GP24-25. Address word = VA << 8: a dummy bit shifts first (U3 QH), then VA23 down to VA1.
+
+; A stalled instruction keeps asserting its side-set, so the idle pulls carry none: md_write would pin the chain low.
+.program md_read
+.side_set 2 opt                     ; SRCLK, RCLK
+
+.wrap_target
+    pull block
+    set x, 23               side 0
+bit:
+    out pins, 1             side 0      ; SER
+    jmp x-- bit             side 1      ; SRCLK rises one cycle after SER settles
+    mov x, y                side 2      ; RCLK rises: the address reaches the cart
+    set pins, 0             side 0      ; /CE /OE /AS /ASEL low, as OSCR reads
+access:
+    jmp x-- access          side 0      ; Y + 1 cycles; RCLK to sample is Y + 3
+    in pins, 16             side 0
+    set pins, 15            side 0
+.wrap
+
+; Three TX words per word written: address, the pin image with the chosen strobes low, the same image idle.
+.program md_write
+.side_set 3 opt                     ; SER, SRCLK, RCLK
+
+.wrap_target
+    pull block
+    set y, 23               side 0
+bit:
+    out x, 1                side 0
+    jmp !x ser_low          side 0
+    nop                     side 1      ; SER high
+    jmp y-- bit             side 3      ; SRCLK rises, SER held
+    jmp latch               side 1
+ser_low:
+    nop                     side 0
+    jmp y-- bit             side 2
+latch:
+    pull block              side 4 [1]  ; RCLK rises; side-set outranks the image on GP20-22
+    mov pins, osr           side 0      ; data out, strobes low
+    mov x, isr              side 0
+strobe:
+    jmp x-- strobe          side 0      ; ISR + 1 cycles; strobes low for ISR + 3
+    pull block              side 0
+    mov pins, osr           side 0      ; strobes high, data held
+.wrap
+
+% c-sdk {
+static inline void md_read_program_init(PIO pio, uint sm, uint offset, uint d0, uint ce, uint ser) {
+    pio_sm_config c = md_read_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, ser, 1);
+    sm_config_set_set_pins(&c, ce, 4);
+    sm_config_set_sideset_pins(&c, ser + 1);
+    sm_config_set_in_pins(&c, d0);
+    sm_config_set_out_shift(&c, false, false, 32);
+    sm_config_set_in_shift(&c, false, true, 16);
+    pio_sm_init(pio, sm, offset, &c);
+}
+
+static inline void md_write_program_init(PIO pio, uint sm, uint offset, uint d0, uint npins, uint ser) {
+    pio_sm_config c = md_write_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, d0, npins);
+    sm_config_set_sideset_pins(&c, ser);
+    sm_config_set_out_shift(&c, false, false, 32);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
