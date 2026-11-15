@@ -71,7 +71,7 @@ const console_cmd_t n64_commands[] = {
     { 's', "s [n]      stuck data bit scan, n sample blocks (default 1024)", cmd_stuck },
     { 'a', "a          address line aliasing test", cmd_addr_lines },
     { 'x', "x <hex>    hexdump 64 bytes at address", cmd_hexdump },
-    { 'd', "d [mb]     raw binary dump (default 64)", cmd_dump },
+    { 'd', "d [mb]     raw binary dump (default: ROM size)", cmd_dump },
     { 'f', "f          FlashRAM id", cmd_fram_id },
     { 'r', "r          raw FlashRAM save dump, 128 KB, read-only", cmd_fram_dump },
     { 'k', "k          reset the CIC and read the handshake: region, seed, variant", cmd_cic },

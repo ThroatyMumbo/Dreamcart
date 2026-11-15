@@ -20,13 +20,9 @@ typedef struct {
     // invalid length. frame_timeout: a frame outran the hard cap and the decoder was resynced.
     uint32_t frames, replies, bad_ev, bad_frame, desync, overruns, no_idle, resyncs, frame_timeout;
     // Wire time of the longest reply, against the 5.184 us/byte the bit rate implies.
-    uint32_t tx_last, tx_max, tx_bytes_max;
-    // Reply done -> receiver armed again: the only window that can lose the next request.
-    uint32_t rearm_last, rearm_max;
+    uint32_t tx_max, tx_bytes_max;
     // The sampler pushed into a full FIFO and lost samples; the hardware's flag, not inferred.
     uint32_t rx_stall;
-    // Longest unattended stretch; the 8-word FIFO holds ~16 us of samples.
-    uint32_t gap_max;
     // Stalls during a drain: the decoder itself fell behind the sample rate.
     uint32_t rx_stall_drain;
     // Decoder end event -> first reply bit, the console-referenced turnaround.

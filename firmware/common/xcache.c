@@ -16,7 +16,7 @@
 #define IDX_LBA      1u
 #define IDX_RECS     1024u
 #define REC_BYTES    128u
-#define RECS_SECTOR  (512u / REC_BYTES)
+#define RECS_SECTOR  (SD_SECTOR / REC_BYTES)
 #define IDX_SECTORS  (IDX_RECS / RECS_SECTOR)
 #define TEST_LBA     (IDX_LBA + IDX_SECTORS)
 #define TEST_SECTORS 2048u
@@ -38,9 +38,10 @@ _Static_assert(sizeof(rec_t) == REC_BYTES, "rec_t is one index slot");
 
 enum { JOB_NONE, JOB_LOAD, JOB_WRITE };
 
-static rec_t *const g_idx = (rec_t *)(PSRAM_BASE + PSRAM_XC_INDEX);
-static uint8_t *const g_stage = (uint8_t *)(PSRAM_BASE + PSRAM_XC_STAGE);
-static uint32_t g_bounce[TURN * 128];
+static const xcache_cfg_t *g_cfg;
+static rec_t *g_idx;
+static uint8_t *g_stage;
+static uint32_t g_bounce[TURN * SD_SECTOR / 4];
 
 static volatile uint32_t g_state = XC_NONE, g_len, g_loaded, g_job;
 static volatile uint32_t g_req, g_req_a, g_req_b;
@@ -57,13 +58,13 @@ static uint8_t g_key_id[64];
 
 static uint32_t g_slot, g_lba, g_pos, g_crc, g_want_crc;    // the job in progress
 
-static uint32_t sectors_of(uint32_t bytes) { return (bytes + 511u) / 512u; }
+static uint32_t sectors_of(uint32_t bytes) { return (bytes + SD_SECTOR - 1) / SD_SECTOR; }
 
-static bool psram_ok(void) { return psram_size() >= PSRAM_XC_STAGE + (1u << 20); }
+static bool psram_ok(void) { return g_cfg && psram_size() >= g_cfg->stage + (1u << 20); }
 
 static uint32_t capacity(void) {
     if (!g_mounted) return 0;
-    uint64_t room = (uint64_t)(g_sectors - DATA_LBA) * 512u, stage = psram_size() - PSRAM_XC_STAGE;
+    uint64_t room = (uint64_t)(g_sectors - DATA_LBA) * SD_SECTOR, stage = psram_size() - g_cfg->stage;
     if (room > stage) room = stage;
     if (g_cap && room > g_cap) room = g_cap;
     return (uint32_t)room;
@@ -81,7 +82,7 @@ static void sd_lost(void) {
 
 static bool idx_flush(uint32_t slot) {
     uint32_t s = slot / RECS_SECTOR;
-    memcpy(g_bounce, (const uint8_t *)g_idx + s * 512u, 512);
+    memcpy(g_bounce, (const uint8_t *)g_idx + s * SD_SECTOR, SD_SECTOR);
     if (sd_write(IDX_LBA + s, 1, (const uint8_t *)g_bounce)) return true;
     sd_lost();
     return false;
@@ -117,7 +118,7 @@ static bool mount(void) {
         return format();
     for (uint32_t s = 0; s < IDX_SECTORS; s += TURN) {
         if (!sd_read(IDX_LBA + s, TURN, (uint8_t *)g_bounce)) return false;
-        memcpy((uint8_t *)g_idx + s * 512u, g_bounce, TURN * 512u);
+        memcpy((uint8_t *)g_idx + s * SD_SECTOR, g_bounce, TURN * SD_SECTOR);
     }
     uint32_t top = 0;
     g_seq = 1, g_head = DATA_LBA;
@@ -169,7 +170,7 @@ static void lookup(uint32_t a, uint32_t b) {
 
 static void load_step(void) {
     uint32_t left = g_len - g_loaded, n = sectors_of(left) < TURN ? sectors_of(left) : TURN;
-    uint32_t bytes = left < n * 512u ? left : n * 512u;
+    uint32_t bytes = left < n * SD_SECTOR ? left : n * SD_SECTOR;
     if (!sd_read(g_lba + g_pos, n, (uint8_t *)g_bounce)) {
         sd_lost();
         g_state = XC_FAILED;
@@ -221,10 +222,10 @@ static void commit(uint32_t crc) {
 }
 
 static void write_step(void) {
-    uint32_t total = sectors_of(g_len), done = g_pos * 512u;
-    uint32_t n = total - g_pos < TURN ? total - g_pos : TURN, bytes = g_len - done < n * 512u ? g_len - done : n * 512u;
+    uint32_t total = sectors_of(g_len), done = g_pos * SD_SECTOR;
+    uint32_t n = total - g_pos < TURN ? total - g_pos : TURN, bytes = g_len - done < n * SD_SECTOR ? g_len - done : n * SD_SECTOR;
     memcpy(g_bounce, g_stage + done, bytes);
-    memset((uint8_t *)g_bounce + bytes, 0, n * 512u - bytes);
+    memset((uint8_t *)g_bounce + bytes, 0, n * SD_SECTOR - bytes);
     g_crc = crc32_update(g_crc, g_bounce, bytes);
     if (!sd_write(g_lba + g_pos, n, (const uint8_t *)g_bounce)) {
         sd_lost();
@@ -247,7 +248,10 @@ static void write_step(void) {
     g_state = XC_STORED;
 }
 
-void xcache_init(void) {
+void xcache_init(const xcache_cfg_t *cfg) {
+    g_cfg = cfg;
+    g_idx = (rec_t *)(PSRAM_BASE + cfg->index);
+    g_stage = (uint8_t *)(PSRAM_BASE + cfg->stage);
     g_state = ensure_mounted() ? XC_IDLE : XC_NONE;
     if (!psram_ok()) printf("xcache: off, no PSRAM to stage entries in\n");
     else if (!g_mounted) printf("xcache: off, %s\n", sd_present() ? "the SD card did not come up" : "no SD card");
@@ -265,11 +269,11 @@ void xcache_service(void) {
         uint32_t op = g_req, a = g_req_a, b = g_req_b;
         __dmb();
         g_req = 0;
-        if (op == XC_SYNC_COMMIT) g_len = a, commit(b);  // a compressed entry ends short of what it reserved
+        if (op == CART_SYNC_XC_COMMIT) g_len = a, commit(b);  // a compressed entry ends short of what it reserved
         else {
             g_job = JOB_NONE;
             if (!ensure_mounted()) g_state = XC_NONE;
-            else if (op == XC_SYNC_LOOKUP) lookup(a, b);
+            else if (op == CART_SYNC_XC_LOOKUP) lookup(a, b);
             else reserve(a);
         }
     }
@@ -279,8 +283,8 @@ void xcache_service(void) {
 
 bool __not_in_flash_func(xcache_sync)(uint32_t op, uint32_t a, uint32_t b) {
     if (g_req || g_job == JOB_WRITE) return false;
-    if (op == XC_SYNC_COMMIT && (g_state != XC_RECV || !a || a > g_len || (a & 3))) return false;
-    if (op != XC_SYNC_LOOKUP && op != XC_SYNC_RESERVE && op != XC_SYNC_COMMIT) return false;
+    if (op == CART_SYNC_XC_COMMIT && (g_state != XC_RECV || !a || a > g_len || (a & 3))) return false;
+    if (op != CART_SYNC_XC_LOOKUP && op != CART_SYNC_XC_RESERVE && op != CART_SYNC_XC_COMMIT) return false;
     g_req_a = a, g_req_b = b;
     g_state = XC_BUSY;
     __dmb();
@@ -329,8 +333,7 @@ static void status(void) {
         const rec_t *r = &g_idx[i];
         if (r->magic != REC_MAGIC) continue;
         char title[21];
-        for (int k = 0; k < 20; k++) title[k] = r->id[0x20 + k] >= 0x20 && r->id[0x20 + k] < 0x7F ? (char)r->id[0x20 + k] : ' ';
-        title[20] = 0;
+        g_cfg->title(r->id, title);
         printf("  %4lu  \"%s\" key %08lX %08lX  %7lu bytes at %lu, seq %lu\n", (unsigned long)i, title,
                (unsigned long)r->key_a, (unsigned long)r->key_b, (unsigned long)r->len, (unsigned long)r->lba,
                (unsigned long)r->seq);
@@ -343,7 +346,7 @@ static void test(void) {
     if (!ensure_mounted()) { printf("xcache: no card to test\n"); return; }
     uint32_t bad = 0, t0 = time_us_32();
     for (uint32_t s = 0; s < TEST_SECTORS; s += TURN) {
-        for (uint32_t i = 0; i < TURN * 128; i++) g_bounce[i] = (s * 128 + i) * 0x9E3779B9u;
+        for (uint32_t i = 0; i < TURN * SD_SECTOR / 4; i++) g_bounce[i] = test_word(s * (SD_SECTOR / 4) + i);
         if (!sd_write(TEST_LBA + s, TURN, (const uint8_t *)g_bounce)) {
             printf("xcache: write failed at %lu, fail %04lX resp %08lX\n", (unsigned long)(TEST_LBA + s),
                    (unsigned long)sd_stats.fail, (unsigned long)sd_stats.resp);
@@ -358,7 +361,7 @@ static void test(void) {
             sd_lost();
             return;
         }
-        for (uint32_t i = 0; i < TURN * 128; i++) bad += g_bounce[i] != (s * 128 + i) * 0x9E3779B9u;
+        for (uint32_t i = 0; i < TURN * SD_SECTOR / 4; i++) bad += g_bounce[i] != test_word(s * (SD_SECTOR / 4) + i);
     }
     uint32_t t2 = time_us_32(), kb = TEST_SECTORS / 2;
     printf("xcache: %lu KB written at %lu KB/s, read back at %lu KB/s, %lu bad words\n", (unsigned long)kb,

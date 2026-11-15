@@ -55,6 +55,15 @@ void console_poll(void) {
     if (c > 0 && n < (int)sizeof line - 1) { line[n++] = (char)c; putchar(c); }
 }
 
+void console_wait_enter(void) {
+    sleep_ms(50);  // the command's line may still have its LF in flight
+    while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {}
+    for (;;) {
+        int c = getchar_timeout_us(100000);
+        if (c == '\r' || c == '\n') return;
+    }
+}
+
 void console_raw_begin(const char *tag, uint32_t total) {
     printf("%s %lu\n", tag, (unsigned long)total);
     stdio_flush();

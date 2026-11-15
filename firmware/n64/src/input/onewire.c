@@ -1,11 +1,4 @@
-// onewire.c -- generic single-wire bidirectional serial transport (see onewire.h / onewire.pio).
-//
-// Drives up to ONEWIRE_MAX_BUSES 1-wire controller links on pio1 (pio0 is the cart bus, pio2 Maple).
-// Blocking, runs on core0. Nothing here is N64-specific -- command bytes and layout are the caller's.
-//
-// One shared PIO program, one SM per bus. The controller data pins sit above GPIO32, so pio1's GPIO
-// base is set to 16 on first init; the SDK then offsets pins passed to onewire_program_init, so
-// callers still pass the real GPIO number (PICO_PIO_USE_GPIO_BASE, on by default on RP2350B).
+// One shared PIO program, one SM per bus; callers pass real GPIO numbers and the SDK applies the base.
 
 #include "input/onewire.h"
 #include "pico/stdlib.h"
@@ -21,7 +14,6 @@ static uint8_t ow_pin[ONEWIRE_MAX_BUSES];
 static bool ow_used[ONEWIRE_MAX_BUSES];
 static absolute_time_t ow_free_at[ONEWIRE_MAX_BUSES];  // the device's settle gap ends here
 static uint ow_offset = 0;
-static bool ow_based = false;   // GPIO base 16 is set once, before any SM on the block starts
 
 static void ow_load(void) {
     ow_offset = pio_add_program(ow_pio, &onewire_program);
@@ -44,10 +36,6 @@ static const pio_tenant_t ow_tenant = { ow_load, ow_unload };
 bool onewire_init(uint8_t id, uint8_t data_pin) {
     if (id >= ONEWIRE_MAX_BUSES || ow_used[id])
         return false;
-    if (!ow_based) {
-        pio_set_gpio_base(ow_pio, 16);
-        ow_based = true;
-    }
     int sm = pio_claim_unused_sm(ow_pio, false);
     if (sm < 0)
         return false;
@@ -86,8 +74,7 @@ uint8_t onewire_transfer(uint8_t id, const uint8_t *request, uint8_t request_len
     for (int i = 0; i < request_len; i++)
         pio_sm_put_blocking(ow_pio, sm, (uint32_t)request[i] << 24);
 
-    // A timed-out byte is written as 0 but does NOT count, so the caller can tell "answered 0x00"
-    // from "silent" -- the basis for presence / hot-plug detection above.
+    // A timed-out byte reads 0 but isn't counted, so callers can tell silence from 0x00.
     uint8_t received = 0;
     for (int i = 0; i < response_len; i++) {
         absolute_time_t timeout = make_timeout_time_us(600);

@@ -44,7 +44,7 @@ void md_cart_detect(void) {
     if (g_cart.snk == MD_SNK_PROBE) {
         md_bus_read(MD_LOCK_BUS >> 1, h, MD_HDR_LEN / 2);
         md_parse_lockon(h, &g_cart);
-        if (g_cart.snk == MD_SNK_S2) md_bus_reg_write(0xA130F0u >> 1, 1);     // OSCR MD.ino:1098
+        if (g_cart.snk == MD_SNK_S2) md_bus_reg_write(MD_SRAM_SWITCH, 1);     // OSCR MD.ino:1098
     }
     if (g_cart.size_unknown) md_set_rom_size(&g_cart, mirror_scan());
     if (g_cart.map == MD_MAP_SSF2) enter(7);

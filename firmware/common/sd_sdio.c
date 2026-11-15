@@ -373,7 +373,7 @@ static bool init_once(sd_card_t *c, uint32_t hz) {
     if (!cmd_r2(9, s.rca, c->csd) || !cmd_r1(7, s.rca, &r) || !wait_idle()) return false;
     if (!cmd_r1(55, s.rca, &r) || !cmd_r1(42, 0, &r)) return false;     // drops DAT3's card-detect pull-up
     if (!cmd_r1(55, s.rca, &r) || !cmd_r1(6, 2, &r)) return false;      // ACMD6: 4-bit bus
-    if (!cmd_r1(16, 512, &r)) return false;
+    if (!cmd_r1(16, SD_SECTOR, &r)) return false;
     c->sectors = sd_csd_sectors(c->csd);
     c->hz = set_clock(hz > SD_DEFAULT_HZ ? SD_DEFAULT_HZ : hz);
     c->high_speed = switch_high_speed(c, hz > SD_DEFAULT_HZ);
@@ -449,12 +449,12 @@ bool sd_sdio_write(const sd_card_t *c, uint32_t sector, uint32_t blocks, const u
     uint32_t r = 0;
     uint8_t cmd = blocks == 1 ? 24 : 25;
     if (!wait_idle()) return false;
-    if (!cmd_r1(cmd, c->block_addr ? sector : sector * 512u, &r) || (r & R1_ERRORS)) {
+    if (!cmd_r1(cmd, c->block_addr ? sector : sector * SD_SECTOR, &r) || (r & R1_ERRORS)) {
         if (r & R1_ERRORS) sd_fail(cmd, SD_FAIL_RESPONSE);
         return false;
     }
     bool ok = true;
-    for (uint32_t k = 0; ok && k < blocks; k++) ok = tx_block((const uint32_t *)(src + 512u * k));
+    for (uint32_t k = 0; ok && k < blocks; k++) ok = tx_block((const uint32_t *)(src + SD_SECTOR * k));
     if (blocks > 1) ok = cmd_r1(12, 0, &r) && ok;
     uint32_t t0 = time_us_32();
     while (!gpio_get(PIN_SD_D0)) {
@@ -473,8 +473,8 @@ bool sd_sdio_read(const sd_card_t *c, uint32_t sector, uint32_t blocks, uint8_t 
         uint32_t n = blocks < MAX_BLOCKS ? blocks : MAX_BLOCKS, r = 0;
         uint8_t cmd = n == 1 ? 17 : 18;
         if (!wait_idle()) return false;
-        rx_start(dst ? (uint32_t *)dst : sd_scratch, n, 512, !dst);
-        if (!cmd_r1(cmd, c->block_addr ? sector : sector * 512u, &r) || (r & R1_ERRORS)) {
+        rx_start(dst ? (uint32_t *)dst : sd_scratch, n, SD_SECTOR, !dst);
+        if (!cmd_r1(cmd, c->block_addr ? sector : sector * SD_SECTOR, &r) || (r & R1_ERRORS)) {
             if (r & R1_ERRORS) sd_fail(cmd, SD_FAIL_RESPONSE);
             rx_stop();
             return false;
@@ -487,7 +487,7 @@ bool sd_sdio_read(const sd_card_t *c, uint32_t sector, uint32_t blocks, uint8_t 
         if (!ok) return false;
         sector += n;
         blocks -= n;
-        if (dst) dst += 512u * n;
+        if (dst) dst += SD_SECTOR * n;
     }
     return true;
 }

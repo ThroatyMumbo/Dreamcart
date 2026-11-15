@@ -247,7 +247,7 @@ uint32_t md_rom_bus(const md_cart_t *c, uint32_t off, uint8_t *state) {
 // OSCR MD.ino:1403-1447: bank 7, 0xA130FF, pages 512 KB into window 0x380000
 unsigned md_state_writes(const md_cart_t *c, uint8_t state, md_reg_write_t w[1]) {
     if (c->map != MD_MAP_SSF2 || state == MD_STATE_ANY) return 0;
-    w[0] = (md_reg_write_t){ 0xA130FFu >> 1, state };
+    w[0] = (md_reg_write_t){ MD_SSF2_BANK(7), state };
     return 1;
 }
 

@@ -1,4 +1,4 @@
-; mapledev.pio — device-side Maple bus, Charlie Cole's maple.pio repacked from 39 words to 32.
+; mapledev.pio — device-side Maple bus, from Charlie Cole's maple.pio, packed to fit one 32-word block.
 
 ; maple_tx: stalls at `out y,32` with the bus released; takes sync count, bit pairs - 1, payload.
 ; The frame leaves the OSR partial, so mapledev_send() restarts the SM before each reply.
@@ -7,7 +7,7 @@
 .define public HOLD   12        ; cycles a bus state is held
 .define public SETTLE  6
 .define public MID     6
-; MaplePad's 125 MHz / 3; dc_dvd's 50 MHz lost more block reads here.
+; 125 MHz / 3, as in MaplePad; 50 MHz dropped block reads.
 .define public CLK_HZ 41666667
 
 .wrap_target
@@ -74,8 +74,7 @@ static inline void maple_pin_init(PIO pio, uint pin_a, uint pin_b) {
     pio_gpio_init(pio, pin_b);
     gpio_set_slew_rate(pin_a, GPIO_SLEW_RATE_SLOW);
     gpio_set_slew_rate(pin_b, GPIO_SLEW_RATE_SLOW);
-    // Both references pull up here and the bus idles high; ctrl.c's pulls-off default is for
-    // buses where the console owns the pull, which this one only partly does.
+    // The bus idles high and the console only partly owns the pull.
     gpio_pull_up(pin_a);
     gpio_pull_up(pin_b);
 }

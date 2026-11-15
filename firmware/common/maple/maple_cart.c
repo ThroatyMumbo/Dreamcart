@@ -16,9 +16,9 @@ static int save_write(const maple_cart_t *cart, const uint8_t *req, unsigned req
     const uint8_t *src = req + 16;
     if (req_len < 16U + n) { return MAPLE_REPLY_NONE; }
     bool (*write)(uint32_t, uint32_t, const uint8_t *) =
-        (off & MAPLE_CART_SPACES) == MAPLE_CART_SAVE ? cart->save_write
-        : (off & MAPLE_CART_SPACES) == MAPLE_CART_CACHE ? cart->cache_write
-        : (off & MAPLE_CART_SPACES) == MAPLE_CART_XCACHE ? cart->xcache_write : 0;
+        (off & MAPLE_CART_SPACES) == CART_SPACE_SAVE ? cart->save_write
+        : (off & MAPLE_CART_SPACES) == CART_SPACE_CACHE ? cart->cache_write
+        : (off & MAPLE_CART_SPACES) == CART_SPACE_XCACHE ? cart->xcache_write : 0;
     if (!write || !n || !cart->crc) { return file_err(payload, resp, MAPLE_CART_BAD_ARG); }
     if (cart->crc(src, n) != want) { return file_err(payload, resp, MAPLE_CART_CRC_BAD); }
     if (!write(off & ~MAPLE_CART_SPACES, n, src)) { return file_err(payload, resp, MAPLE_CART_BAD_ARG); }
@@ -55,21 +55,21 @@ static int block_read(const maple_cart_t *cart, uint32_t func, const uint8_t *re
     if (!maple_has_words(req, req_len, 2)) { return MAPLE_REPLY_NONE; }
     uint32_t off = maple_data_word(req, 1);
     uint32_t n = maple_has_words(req, req_len, 3) ? maple_data_word(req, 2) : MAPLE_CART_DEFAULT_LEN;
-    bool want_crc = maple_has_words(req, req_len, 4) && (maple_data_word(req, 3) & MAPLE_CART_CRC);
-    uint32_t max = want_crc ? MAPLE_CART_CRC_MAX_LEN : MAPLE_CART_MAX_LEN;
+    bool want_crc = maple_has_words(req, req_len, 4) && (maple_data_word(req, 3) & CART_READ_CRC);
+    uint32_t max = want_crc ? CART_CRC_MAX_LEN : MAPLE_CART_MAX_LEN;
     if (!n || (n & 3U) || n > max || off > UINT32_MAX - n || (want_crc && !cart->crc)) {
         return file_err(payload, resp, MAPLE_CART_BAD_ARG);
     }
     uint32_t space = off & MAPLE_CART_SPACES, o = off & ~MAPLE_CART_SPACES;
-    if (space == MAPLE_CART_SAVE) {
+    if (space == CART_SPACE_SAVE) {
         if (!cart->save_read || !cart->save_read(o, n, payload + 8)) {
             return file_err(payload, resp, MAPLE_CART_BAD_ARG);
         }
-    } else if (space == MAPLE_CART_TABLES || space == MAPLE_CART_CACHE || space == MAPLE_CART_XCACHE) {
-        uint32_t (*size_fn)(void) = space == MAPLE_CART_TABLES ? cart->tables_size
-                                  : space == MAPLE_CART_CACHE ? cart->cache_size : cart->xcache_size;
-        bool (*read_fn)(uint32_t, uint32_t, uint8_t *) = space == MAPLE_CART_TABLES ? cart->tables_read
-                                                       : space == MAPLE_CART_CACHE ? cart->cache_read : cart->xcache_read;
+    } else if (space == CART_SPACE_TABLES || space == CART_SPACE_CACHE || space == CART_SPACE_XCACHE) {
+        uint32_t (*size_fn)(void) = space == CART_SPACE_TABLES ? cart->tables_size
+                                  : space == CART_SPACE_CACHE ? cart->cache_size : cart->xcache_size;
+        bool (*read_fn)(uint32_t, uint32_t, uint8_t *) = space == CART_SPACE_TABLES ? cart->tables_read
+                                                       : space == CART_SPACE_CACHE ? cart->cache_read : cart->xcache_read;
         uint32_t size = size_fn ? size_fn() : 0;
         if (!read_fn || n > size || o > size - n) { return file_err(payload, resp, MAPLE_CART_BAD_ARG); }
         if (!read_fn(o, n, payload + 8)) { return file_err(payload, resp, MAPLE_CART_NOT_READY); }

@@ -6,7 +6,7 @@
 #include "cart_flashram.h"
 
 #define FRAM_BYTES  131072u
-#define BLOCK_BYTES 512
+#define BLOCK_BYTES N64_BUS_BURST
 
 // Read-only by construction: erase and program only happen on D2 (execute), never sent here
 #define FRAM_STATUS 0xE1000000u

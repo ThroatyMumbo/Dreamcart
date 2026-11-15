@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define SD_SECTOR     512u          // bytes a block, and the block length CMD16 sets on byte-addressed cards
 #define SD_DEFAULT_HZ 25000000u     // default speed: the most a card takes before CMD6
 #define SD_MAX_HZ     50000000u     // high speed, after CMD6 switches function group 1
 

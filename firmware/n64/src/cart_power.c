@@ -12,12 +12,16 @@
 #include "cart_pass.h"
 #include "cart_stream.h"
 #include "cart_power.h"
+#include "cart_sync.h"
+#include "console.h"
+#include "xcache.h"
 
 #define RAIL_MS    50u      // U1 charging C4 + C8; TP3 is not on a GPIO
 #define CIC_MS     300u     // cart clock running this long before reset lifts
 #define RESET_MS   50u
 #define QUIESCE_MS 20u      // a Maple command already past the ready check finishes well inside this
 #define NPINS      (PIN_CART_LAST + 1)
+_Static_assert(CART_STREAM_BLOCK == N64_BUS_BURST, "the ROM stream reads whole bus bursts");
 
 static volatile bool g_ready = true, g_off;
 static volatile uint8_t g_req;  // a BLOCK_SYNC power op core1 took, until core0 has carried it out
@@ -29,10 +33,21 @@ void cart_power_on(void) {
     sleep_ms(RAIL_MS);
 }
 
-void cart_reset_release(void) {
+void cart_bringup(bool first) {
     sleep_ms(CIC_MS);
     n64_bus_set_reset(true);
     sleep_ms(RESET_MS);
+    if (first) cart_eeprom_init();
+    else cart_eeprom_reload();
+    cart_stream_init(n64_bus_read, CART_ROM);
+    cart_set_rom_mb(cart_diag_probe_size() >> 20);  // the console scans the whole ROM, so it needs the real size
+}
+
+void cart_attach(void) {
+    cart_pass_init();
+    uint8_t h[CART_HDR_LEN];
+    cart_header_read(h);
+    xcache_set_cart(h, cart_rom_size());
 }
 
 bool __not_in_flash_func(cart_ready)(void) { return g_ready; }
@@ -52,16 +67,6 @@ static void pins_restore(void) {
     for (uint p = 0; p < NPINS; p++) {
         gpio_set_pulls(p, g_pins[p].up, g_pins[p].down);
         gpio_set_function(p, g_pins[p].fn);
-    }
-}
-
-// the line that ran 'h' may still have its LF in flight, so drain before waiting
-static void wait_enter(void) {
-    sleep_ms(50);
-    while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {}
-    for (;;) {
-        int c = getchar_timeout_us(100000);
-        if (c == '\r' || c == '\n') return;
     }
 }
 
@@ -98,11 +103,8 @@ static void power_up(void) {
     if (!g_off) return;
     cart_power_on();
     pins_restore();
-    cart_reset_release();
-    cart_eeprom_reload();
-    cart_set_rom_mb(cart_diag_probe_size() >> 20);
-    cart_stream_init(n64_bus_read, CART_ROM);
-    cart_pass_init();
+    cart_bringup(false);
+    cart_attach();
     g_off = false;
     __dmb();
     g_ready = true;
@@ -112,7 +114,7 @@ static void power_up(void) {
 void cart_swap(void) {
     power_down();
     printf("swap carts, then press Enter\n");
-    wait_enter();
+    console_wait_enter();
     power_up();
 }
 

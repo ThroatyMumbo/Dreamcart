@@ -5,7 +5,6 @@
 
 #define SNES_HDR_BUS     0x00FFB0u      // 00:FFB0-FFFF; the cart's decoder puts its own header there
 #define SNES_HDR_LEN     80u
-#define SNES_SRAM_MAX    (128u << 10)
 #define SNES_EXHI_MAX    0x7E0000u      // C0-FF then 40-7D; 7E-7F are WRAM
 #define SNES_STATE_ANY   0xFFu          // no chip register state needed
 #define SNES_CHECK_CHUNK (128u << 10)   // checksum bookkeeping granularity

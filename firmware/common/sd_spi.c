@@ -149,7 +149,7 @@ static bool init_once(sd_card_t *c, uint32_t hz) {
     c->block_addr = v2 && (c->ocr & 0x40000000u);
 
     if (!c->block_addr) {
-        r = command(16, 512);
+        r = command(16, SD_SECTOR);
         deselect();
         if (r != 0) return false;
     }
@@ -175,9 +175,9 @@ bool sd_spi_init(sd_card_t *c, uint32_t hz) {
 }
 
 static bool read_block(uint8_t *dst) {
-    if (dst) return read_data(dst, 512);
-    if (!read_data(scratch, 512)) return false;
-    sd_stats.sum += sd_word_sum(sd_scratch, 128);
+    if (dst) return read_data(dst, SD_SECTOR);
+    if (!read_data(scratch, SD_SECTOR)) return false;
+    sd_stats.sum += sd_word_sum(sd_scratch, SD_SECTOR / 4);
     return true;
 }
 
@@ -186,9 +186,9 @@ static bool write_block(uint8_t token, const uint8_t *src) {
         sd_fail(sd_stats.stage, SD_FAIL_NO_DATA);
         return false;
     }
-    uint16_t crc = sd_crc16(src, 512);
+    uint16_t crc = sd_crc16(src, SD_SECTOR);
     xfer(token);
-    spi_write_blocking(SD_SPI, src, 512);
+    spi_write_blocking(SD_SPI, src, SD_SECTOR);
     xfer((uint8_t)(crc >> 8));
     xfer((uint8_t)crc);
     uint8_t r = xfer(0xFF);
@@ -201,12 +201,12 @@ static bool write_block(uint8_t token, const uint8_t *src) {
 }
 
 bool sd_spi_write(const sd_card_t *c, uint32_t sector, uint32_t blocks, const uint8_t *src) {
-    uint32_t addr = c->block_addr ? sector : sector * 512u;
+    uint32_t addr = c->block_addr ? sector : sector * SD_SECTOR;
     bool ok;
     if (blocks == 1) {
         ok = command(24, addr) == 0 && write_block(TOKEN_DATA, src);
     } else if ((ok = command(25, addr) == 0)) {
-        for (uint32_t k = 0; ok && k < blocks; k++) ok = write_block(TOKEN_MULTI, src + 512u * k);
+        for (uint32_t k = 0; ok && k < blocks; k++) ok = write_block(TOKEN_MULTI, src + SD_SECTOR * k);
         ok = wait_ready(WRITE_US) && ok;
         xfer(TOKEN_STOP);
         xfer(0xFF);
@@ -217,12 +217,12 @@ bool sd_spi_write(const sd_card_t *c, uint32_t sector, uint32_t blocks, const ui
 }
 
 bool sd_spi_read(const sd_card_t *c, uint32_t sector, uint32_t blocks, uint8_t *dst) {
-    uint32_t addr = c->block_addr ? sector : sector * 512u;
+    uint32_t addr = c->block_addr ? sector : sector * SD_SECTOR;
     bool ok;
     if (blocks == 1) {
         ok = command(17, addr) == 0 && read_block(dst);
     } else if ((ok = command(18, addr) == 0)) {
-        for (uint32_t k = 0; ok && k < blocks; k++) ok = read_block(dst ? dst + 512u * k : NULL);
+        for (uint32_t k = 0; ok && k < blocks; k++) ok = read_block(dst ? dst + SD_SECTOR * k : NULL);
         ok = command(12, 0) == 0 && ok;
         ok = wait_ready(BUSY_US) && ok;
     }

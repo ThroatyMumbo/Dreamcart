@@ -31,7 +31,6 @@ static int      g_dma = -1;
 static maple_rx_t g_rx;
 static bool       g_locked;                 // a frame has decoded since the last re-arm
 static mapledev_stats_t g_st;
-static uint32_t g_last_drain_us;
 static uint32_t   g_end_us;                 // timerawl at the decoder's end event
 
 static void tx_park(void);
@@ -94,7 +93,6 @@ void __not_in_flash_func(mapledev_set_port)(mapledev_pkt_t *pkt, uint8_t port) {
 }
 
 void __not_in_flash_func(mapledev_resync)(void) {
-    uint32_t t0 = timer_hw->timerawl;
     rx_set(false);
     pio_sm_clear_fifos(g_pio, g_sm_sample);
     pio_sm_restart(g_pio, g_sm_edge_a);
@@ -109,16 +107,12 @@ void __not_in_flash_func(mapledev_resync)(void) {
     g_locked = false;
     rx_set(true);
     g_st.resyncs++;
-    g_st.rearm_last = timer_hw->timerawl - t0;
-    if (g_st.rearm_last > g_st.rearm_max) { g_st.rearm_max = g_st.rearm_last; }
 }
 
 bool __not_in_flash_func(mapledev_poll)(uint8_t *frame, unsigned *len, uint32_t timeout_us) {
     uint32_t t0 = timer_hw->timerawl;
     uint32_t stallbit = 1U << (PIO_FDEBUG_RXSTALL_LSB + g_sm_sample);
-    uint32_t gap = t0 - g_last_drain_us;
 
-    if (g_last_drain_us && gap > g_st.gap_max) { g_st.gap_max = gap; }
     if (g_pio->fdebug & stallbit) { g_pio->fdebug = stallbit; g_st.rx_stall++; }
     for (;;) {
         while (!pio_sm_is_rx_fifo_empty(g_pio, g_sm_sample)) {
@@ -142,15 +136,12 @@ bool __not_in_flash_func(mapledev_poll)(uint8_t *frame, unsigned *len, uint32_t 
                 g_locked = true;                        // synchronized: errors now mean corruption
                 g_st.frames++;
                 g_end_us = timer_hw->timerawl;
-                g_last_drain_us = g_end_us;
                 return true;
             }
         }
-        // Abandoning a frame mid-flight on the caller's idle budget would hand back a partial
-        // decode that only the static g_rx happens to make survivable. Ride it out to the cap.
+        // Past the idle budget, finish a frame in flight (up to the cap) rather than return a partial decode.
         uint32_t waited = timer_hw->timerawl - t0;
         if (waited > timeout_us) {
-            g_last_drain_us = timer_hw->timerawl;
             if (!maple_rx_in_frame(&g_rx)) { return false; }
             if (waited > timeout_us + MAPLEDEV_FRAME_MAX_US) {
                 g_st.frame_timeout++;
@@ -177,8 +168,7 @@ static bool __not_in_flash_func(wait_bus_idle)(void) {
 bool __not_in_flash_func(mapledev_send)(const mapledev_pkt_t *pkt) {
     rx_set(false);                              // or we decode our own frame and overrun the FIFO
 
-    // The last frame left the OSR partial; restarting clears it (maple_model's one-frame bound).
-    // Rearming drives nothing: the SM releases the bus and stalls on `out y,32`.
+    // The last frame left the OSR partial; restarting clears it. Rearming drives nothing: the SM releases the bus and stalls on `out y,32`.
     pio_sm_set_enabled(g_pio, g_sm_tx, false);
     pio_sm_clear_fifos(g_pio, g_sm_tx);
     pio_sm_restart(g_pio, g_sm_tx);
@@ -231,8 +221,8 @@ bool __not_in_flash_func(mapledev_wait_sent)(const mapledev_pkt_t *pkt) {
         if (timer_hw->timerawl - t0 > budget) { goto late; }
     }
     tx_park();
-    g_st.tx_last = timer_hw->timerawl - t0;
-    if (g_st.tx_last > g_st.tx_max) { g_st.tx_max = g_st.tx_last; g_st.tx_bytes_max = pkt->nbytes; }
+    uint32_t tx = timer_hw->timerawl - t0;
+    if (tx > g_st.tx_max) { g_st.tx_max = tx; g_st.tx_bytes_max = pkt->nbytes; }
     return true;
 late:
     g_st.overruns++;                            // a nonzero count is the evidence, not a fix

@@ -7,6 +7,7 @@
 #include "md_cart.h"
 #include "cart_sram.h"
 #include "cart_stream.h"
+#include "cart_sync.h"
 #include "crc_dma.h"
 #include "console.h"
 #include "maple_cmds.h"
@@ -26,7 +27,7 @@ static const maple_devid_t g_cart_id = {
     .max_power     = 500,
 };
 
-// GET_MEDIA_INFO words 6-8: md_save_t, the save's first bus byte, and 1 when A130F1 switches it over ROM.
+// The info words (cart_sync.h MD_MI_*): md_save_t, the save's first bus byte, and 1 when A130F1 switches it over ROM.
 static uint32_t g_info[MAPLE_CART_INFO_WORDS];
 
 static void __not_in_flash_func(md_info)(uint32_t *w) {
@@ -57,9 +58,9 @@ int main(void) {
     static cart_save_chip_t chip = { .read = md_cart_save_read, .write = md_cart_save_write };
     if (md_save_served(md_cart())) {
         chip.size = md_cart()->save_size;
-        g_info[0] = md_cart()->save;
-        g_info[1] = md_save_bus(md_cart());
-        g_info[2] = md_cart()->sram_switch;
+        g_info[CART_INFO(MD_MI_SAVE)] = md_cart()->save;
+        g_info[CART_INFO(MD_MI_BUS)] = md_save_bus(md_cart());
+        g_info[CART_INFO(MD_MI_SWITCH)] = md_cart()->sram_switch;
     }
     cart_sram_init(&chip);
     g_cart.rom_span = md_cart()->served;

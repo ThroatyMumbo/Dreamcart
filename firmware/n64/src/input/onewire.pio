@@ -1,11 +1,5 @@
-; onewire.pio -- generic single-wire bidirectional serial transport (half-duplex "1-wire" bus).
-;
-; One open-drain data line idles high via an external pull-up; either end pulses it low to send bits.
-; Bits are pulse-width encoded in 1 us cells: 0 = long low + short high, 1 = short low + long high;
-; a trailing stop bit (1) ends each direction. Matches N64/GameCube "joybus" but carries no protocol
-; meaning. Open-drain via OPTIONAL side-set on PINDIRS: side 1 = pindir out (line pulled LOW), side 0
-; = pindir in (released, pull-up takes it HIGH). TX FIFO: a count word (response bytes - 1) then the
-; request bytes (MSB-justified). T1/T2 set the cell shape; clkdiv makes 4 PIO cycles == 1 us.
+; Joybus encoding, 4 us cells: 0 = 3 us low + 1 high, 1 = 1 low + 3 high, then a stop bit. Side-set 1 pulls the line low.
+; TX FIFO: response bytes - 1, then the request bytes MSB-justified.
 
 .program onewire
 .side_set 1 opt pindirs
@@ -22,10 +16,10 @@ sendData:
   out x, 1  side 0 [T1 - 1]; send data bit by bit
   jmp !x do_zero side 1 [T1 - 1] ; set 0 for 4 cycles
 do_one:
-  jmp !OSRE sendData side 0 [T1 * 2 - 1] ; set 1 for 10 cycles (the 6th cycle is on the out line above and jmp takes 1 cycle)
+  jmp !OSRE sendData side 0 [T1 * 2 - 1] ; release for 8 cycles; the next out adds 4 more high
   jmp sendStop [T1 - 1]
 do_zero:
-  jmp !OSRE sendData [T1 * 2 - 1]; set 1 (the 2nd cycle is on the out line above and jmp takes 1 cycle)
+  jmp !OSRE sendData [T1 * 2 - 1]; stay low 8 more cycles
   jmp sendStop side 0 [T1 - 1]
 sendStop:
   nop side 1 [T1 - 1] ; send the stop bit (1)
@@ -59,7 +53,7 @@ static inline void onewire_program_init(PIO pio, uint sm, uint offset, uint pin_
     sm_config_set_out_shift(c, false, true, 8);
     sm_config_set_in_shift(c, false, true, 8);
 
-    // 1 MHz bit-cell timebase regardless of clk_sys.
+    // 4 PIO cycles per us, so T1 + T2 is a 4 us cell, regardless of clk_sys.
     int cyclesPerBit = (onewire_T1 + onewire_T2) / 4;
     float frequency = 1000000;
     float clockDiv = clock_get_hz(clk_sys) / (cyclesPerBit * frequency);

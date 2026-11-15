@@ -8,9 +8,10 @@ typedef struct {
 } console_cmd_t;
 
 // The UART line console. Unknown keys and '?' print every entry's help, tables in the order added.
-#define CONSOLE_MAX_TABLES 4
+#define CONSOLE_MAX_TABLES 5
 void console_add(const console_cmd_t *cmds, unsigned n);
 void console_poll(void);            // core0 main loop; never blocks
+void console_wait_enter(void);      // blocks until CR or LF, after dropping what the command's own line left
 
 // Raw binary on stdout after a "<tag> <total>" line, with CRLF translation off until console_raw_end.
 void console_raw_begin(const char *tag, uint32_t total);
@@ -24,3 +25,6 @@ void console_hexdump(const uint8_t *d, uint32_t n);
 
 // "<what><n> Mbit" for whole Mbits from 1 MB up, else "<what><n> KB"; no newline
 void console_print_size(const char *what, uint32_t bytes);
+
+// Word i of the memory tests' pattern: a Fibonacci hash, so neighbors differ in about half their bits
+static inline uint32_t test_word(uint32_t i) { return i * 0x9E3779B9u; }

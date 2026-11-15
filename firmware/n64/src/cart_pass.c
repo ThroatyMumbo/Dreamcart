@@ -16,7 +16,7 @@
 #define JR_RA        0x03E00008u
 #define MAX_PAD      8
 #define MAX_STARTS   12288u
-#define BLOCK        512u
+#define BLOCK        N64_BUS_BURST
 #define BLOCKS_TURN  8u           // per main-loop turn, so the ROM ring still refills between them
 #define SLOTS        4u
 #define SLOT_BYTES   (256u << 10)
@@ -32,6 +32,7 @@ typedef struct {
 
 static uint32_t g_arena[PASS_BITMAP / 4];   // the pass's bitmap, or a cache blob
 static uint32_t *const g_starts = (uint32_t *)(PSRAM_BASE + PSRAM_PASS_STARTS);   // MAX_STARTS words
+_Static_assert(PSRAM_PASS_STARTS + 4 * MAX_STARTS <= PSRAM_XC_INDEX, "the pass's starts run into the SD cache's index");
 static uint8_t g_cart_hdr[64];
 
 static volatile uint32_t g_pass = PASS_NONE, g_pass_req, g_nstarts;
@@ -60,7 +61,6 @@ void cart_pass_init(void) {
     g_pass = PASS_NONE, g_pass_req = 0, g_nstarts = 0;
     g_commit = COMMIT_NONE, g_commit_req = 0;
     cart_header_read(g_cart_hdr);
-    xcache_set_cart(g_cart_hdr, cart_rom_size());
     for (uint32_t i = 0; i < SLOTS; i++) {
         const slot_hdr_t *h = slot_at(i);
         if (h->seq >= g_seq && slot_valid(h)) g_seq = h->seq + 1;
@@ -242,13 +242,13 @@ bool __not_in_flash_func(cart_cache_write)(uint32_t off, uint32_t len, const uin
 
 bool __not_in_flash_func(cart_pass_sync)(uint32_t op, uint32_t a, uint32_t b) {
     if (g_pass == PASS_RUNNING || g_commit == COMMIT_BUSY || g_commit_req || g_pass_req) return false;
-    if (op == 1) {
+    if (op == CART_SYNC_PASS) {
         g_commit = COMMIT_NONE;
         __dmb();
         g_pass_req = 1;
         return true;
     }
-    if (op == 2 && a && a <= CACHE_MAX) {
+    if (op == CART_SYNC_CACHE_COMMIT && a && a <= CACHE_MAX) {
         g_commit_len = a, g_commit_crc = b;
         __dmb();
         g_commit_req = 1;
@@ -258,8 +258,8 @@ bool __not_in_flash_func(cart_pass_sync)(uint32_t op, uint32_t a, uint32_t b) {
 }
 
 void __not_in_flash_func(cart_pass_info)(uint32_t *w) {
-    w[0] = g_cache_len;
-    w[1] = g_pass_req ? PASS_RUNNING : g_pass;
-    w[2] = g_nstarts;
-    w[3] = g_commit_req ? COMMIT_BUSY : g_commit;
+    w[CART_INFO(N64_MI_CACHE)] = g_cache_len;
+    w[CART_INFO(N64_MI_PASS)] = g_pass_req ? PASS_RUNNING : g_pass;
+    w[CART_INFO(N64_MI_STARTS)] = g_nstarts;
+    w[CART_INFO(N64_MI_COMMIT)] = g_commit_req ? COMMIT_BUSY : g_commit;
 }

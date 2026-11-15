@@ -1,19 +1,18 @@
-// The console's translated code, cached on the microSD card in raw sectors (docs/n64_any_cart.md, "SD cache").
-// Entries are keyed by the cart (64-byte id and size) and two words from the console; one entry at a time is
-// staged in PSRAM. Core0 does the SD work in xcache_service; core1 only copies to and from PSRAM.
+// Translated code in raw microSD sectors (docs/n64_any_cart.md, "SD cache"), keyed by cart id, size and two console
+// words, staged one entry at a time in PSRAM; core0 does the SD work in xcache_service, core1 only copies.
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include "cart_sync.h"
 #include "console.h"
 
-#define XC_SYNC_LOOKUP  5u      // BLOCK_SYNC {op, key a, key b}: HIT (entry streams into PSRAM) or MISS
-#define XC_SYNC_RESERVE 6u      // {op, bytes}: RECV, or FULL when it can't be stored
-#define XC_SYNC_COMMIT  7u      // {op, bytes, CRC-32}: the first bytes written, at most the reserve, go to the card
+typedef struct {
+    uint32_t index, stage;  // PSRAM offsets: the card's index mirrored (128 KB), and the entry in flight to the end
+    void (*title)(const uint8_t id[64], char title[21]);  // a stored cart id as the status listing names it
+} xcache_cfg_t;
 
-enum { XC_NONE, XC_IDLE, XC_BUSY, XC_HIT, XC_MISS, XC_RECV, XC_STORED, XC_FAILED, XC_FULL };
-
-void xcache_init(void);                                 // core0, after boot: brings the card up and reads its index
-void xcache_set_cart(const uint8_t id[64], uint32_t size);
+void xcache_init(const xcache_cfg_t *cfg);              // core0, after boot: brings the card up and reads its index
+void xcache_set_cart(const uint8_t id[64], uint32_t size);  // the cart's key: its first 64 bytes and ROM size
 void xcache_service(void);                              // core0 main loop: a few sectors of a load or a store
 
 // core1, inside the Maple reply turnaround

@@ -10,7 +10,8 @@
 #define MD_SAVE_MAX     (64u << 10)
 #define MD_ROM_MAX      (16u << 20)
 #define MD_STATE_ANY    0xFFu
-#define MD_SRAM_SWITCH  (0xA130F1u >> 1) // word address in the TIME range
+#define MD_SRAM_SWITCH  (0xA130F1u >> 1) // word address in the TIME range; S&K's Sonic 2 patch switch too
+#define MD_SSF2_BANK(n) ((0xA130F1u + 2u * (n)) >> 1)  // SSF2 mapper: window n's 512 KB page, n 1-7
 #define MD_S2_PATCH     0x40000u        // Sonic 2's extra ROM in S&K, after A130F1 = 1
 
 typedef enum { MD_MAP_LINEAR, MD_MAP_SSF2 } md_map_t;

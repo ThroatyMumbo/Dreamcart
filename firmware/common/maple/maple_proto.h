@@ -14,7 +14,6 @@ enum {
     MAPLE_CMD_DEVICE_REQUEST     = 1,
     MAPLE_CMD_ALL_STATUS_REQUEST = 2,
     MAPLE_CMD_RESET_DEVICE       = 3,
-    MAPLE_CMD_SHUTDOWN_DEVICE    = 4,
     MAPLE_CMD_RESP_DEVICE_STATUS = 5,
     MAPLE_CMD_RESP_ALL_STATUS    = 6,
     MAPLE_CMD_RESP_ACK           = 7,
@@ -25,12 +24,10 @@ enum {
     MAPLE_CMD_BLOCK_READ         = 11,
     MAPLE_CMD_BLOCK_WRITE        = 12,
     MAPLE_CMD_BLOCK_SYNC         = 13,
-    MAPLE_CMD_SET_CONDITION      = 14,
 
-    // Refusals, KOS's signed int8 as the wire byte. RESEND is never sent (KOS requeues it forever);
+    // Refusals, KOS's signed int8 as the wire byte. RESEND (0xfc) is never sent (KOS requeues it forever);
     // KOS's NONE (0xff) is the console's own no-reply marker.
     MAPLE_RESP_FILE_ERR          = 0xfb,
-    MAPLE_RESP_RESEND            = 0xfc,
     MAPLE_RESP_UNKNOWN_CMD       = 0xfd,
     MAPLE_RESP_UNKNOWN_FUNC      = 0xfe,
 };
@@ -47,23 +44,8 @@ enum {
 // Logical function codes: bswap32 of the values a Dreamcast reads back.
 #define MAPLE_FUNC_CONTROLLER 1u
 
-// Active LOW on the wire: 1 is released. C/Z/D do not exist on an HKT-7700 and stay set.
-#define MAPLE_BTN_C     0x0001
-#define MAPLE_BTN_B     0x0002
-#define MAPLE_BTN_A     0x0004
-#define MAPLE_BTN_START 0x0008
-#define MAPLE_BTN_UP    0x0010
-#define MAPLE_BTN_DOWN  0x0020
-#define MAPLE_BTN_LEFT  0x0040
-#define MAPLE_BTN_RIGHT 0x0080
-#define MAPLE_BTN_Z     0x0100
-#define MAPLE_BTN_Y     0x0200
-#define MAPLE_BTN_X     0x0400
-#define MAPLE_BTN_D     0x0800
-
 // 0x80 center, so full deflection lands on 0x01/0xff — the same range MaplePad's ADC map produces.
 #define MAPLE_AXIS_CENTER 0x80
-#define MAPLE_AXIS_FULL   127
 
 typedef struct {
     uint16_t buttons;

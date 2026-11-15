@@ -2,6 +2,8 @@
 // through the XIP window. Sequence after SparkFun's sfe_psram.c for the RP2350.
 #include "psram.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "hardware/structs/qmi.h"
@@ -121,3 +123,29 @@ void __not_in_flash_func(psram_leave)(void) {
     __dmb();
     inside = 0;
 }
+
+// A pattern over the first kb of PSRAM, written then read back through the XIP window, with both rates
+static void cmd_psram(const char *arg) {
+    uint32_t kb = strtoul(arg, NULL, 0);
+    if (!size) { printf("psram  none found\n"); return; }
+    if (!kb || kb > size >> 10) kb = size >> 10;
+    volatile uint32_t *p = (volatile uint32_t *)PSRAM_BASE;
+    uint32_t words = kb * 256, bad = 0;
+    psram_lock();
+    uint32_t t0 = time_us_32();
+    for (uint32_t i = 0; i < words; i++) p[i] = test_word(i);
+    uint32_t t1 = time_us_32();
+    for (uint32_t i = 0; i < words; i++) bad += p[i] != test_word(i);
+    uint32_t t2 = time_us_32();
+    psram_unlock();
+    printf("psram  %lu KB of %lu: %lu bad words, write %lu KB/s, read %lu KB/s (cached)\n", (unsigned long)kb,
+           (unsigned long)(size >> 10), (unsigned long)bad, (unsigned long)(kb * 1000000ull / (t1 - t0 + 1)),
+           (unsigned long)(kb * 1000000ull / (t2 - t1 + 1)));
+}
+
+const console_cmd_t psram_commands[] = {
+    { 'l', "l [kb]     PSRAM pattern write and read-back (default all of it); wipes what PSRAM held, reboot after",
+      cmd_psram },
+};
+
+const unsigned psram_ncommands = sizeof psram_commands / sizeof psram_commands[0];

@@ -9,7 +9,7 @@
 bool dc_link_start(const maple_cart_t *cart, const maple_devid_t *id);
 bool dc_link_running(void);
 
-// MAPLE_BTN_* bits held down, active high here; 0 releases everything.
+// Controller button bits held down (the wire's, active high here: see the `j` command); 0 releases everything.
 void dc_link_set_buttons(uint16_t pressed);
 
 // Analog triggers, 0 released to 255 fully pulled.

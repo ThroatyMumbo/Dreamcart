@@ -6,7 +6,9 @@
 void n64_bus_init(void);
 void n64_bus_set_reset(bool released);
 
-// At most one 512-byte block: the cart auto-increments only within one. Lands big-endian as on the cart.
+#define N64_BUS_BURST 512u  // the cart auto-increments only within one aligned burst
+
+// At most one N64_BUS_BURST, inside one. Lands big-endian as on the cart.
 void n64_bus_read(uint32_t addr, void *dst, uint32_t n);
 void n64_bus_read_words(uint32_t addr, uint16_t *out, uint32_t words);
 void n64_bus_write_words(uint32_t addr, const uint16_t *words, uint32_t count);
