@@ -1,0 +1,321 @@
+(footprint "Adafruit_4682_microSD"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Adafruit 4682 microSD SPI/SDIO breakout on a 1x09 2.54 mm header; card slot faces -y and the card overhangs that edge.")
+	(tags "adafruit 4682 microsd sdio breakout")
+	(property "Reference" "REF**"
+		(at -12.7 4.54 0)
+		(layer "F.SilkS")
+		(uuid "c3a91ff8-1c21-53bd-b033-55c7e3afdf7e")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "Adafruit_4682_microSD"
+		(at 0 -16.32 0)
+		(layer "F.Fab")
+		(uuid "ad2fd7ee-cec6-5e7c-99d4-e9be1517696c")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "09f83342-3645-5350-ae44-c53c2bca1256")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "f80901e9-0533-5954-b7b9-741233b54b99")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_poly
+		(pts
+			(xy -12.7 -17.78) (xy -10.16 -20.32) (xy 10.16 -20.32) (xy 12.7 -17.78) (xy 12.7 0) (xy 10.16 2.54)
+			(xy -10.16 2.54) (xy -12.7 0)
+		)
+		(stroke
+			(width 0.12)
+			(type default)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "e7b9cf21-ba7e-550c-9dae-b2d8ec0df08f")
+	)
+	(fp_rect
+		(start -12.95 -22.32)
+		(end 12.95 2.79)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "5cf13516-94c8-5610-bc34-f371cecefe91")
+	)
+	(fp_poly
+		(pts
+			(xy -12.7 -17.78) (xy -10.16 -20.32) (xy 10.16 -20.32) (xy 12.7 -17.78) (xy 12.7 0) (xy 10.16 2.54)
+			(xy -10.16 2.54) (xy -12.7 0)
+		)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "6a76f2f4-4669-528a-992a-7767a5a9d339")
+	)
+	(fp_text user "3V"
+		(at -10.16 -1.6 90)
+		(layer "F.SilkS")
+		(uuid "73748dc5-4092-508e-a622-306380d3e151")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.12)
+			)
+			(justify left)
+		)
+	)
+	(fp_text user "GND"
+		(at -7.62 -1.6 90)
+		(layer "F.SilkS")
+		(uuid "02f16110-6e64-5b02-9a0b-dcb32493b392")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.12)
+			)
+			(justify left)
+		)
+	)
+	(fp_text user "CLK"
+		(at -5.08 -1.6 90)
+		(layer "F.SilkS")
+		(uuid "ba4e4264-c38b-5a6a-a04d-2f3b5ae759cd")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.12)
+			)
+			(justify left)
+		)
+	)
+	(fp_text user "D0/SO"
+		(at -2.54 -1.6 90)
+		(layer "F.SilkS")
+		(uuid "8da2de66-32c6-57db-a477-67ae1d2bf74c")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.12)
+			)
+			(justify left)
+		)
+	)
+	(fp_text user "CARD"
+		(at 0 -18.82 0)
+		(layer "F.SilkS")
+		(uuid "794cb245-cc21-564f-99a6-3ffe8359d174")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(fp_text user "CMD/SI"
+		(at 0 -1.6 90)
+		(layer "F.SilkS")
+		(uuid "1d346171-0429-5f81-921b-add0a3578b5e")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.12)
+			)
+			(justify left)
+		)
+	)
+	(fp_text user "D3/CS"
+		(at 2.54 -1.6 90)
+		(layer "F.SilkS")
+		(uuid "83ad7d61-42cf-5a31-9ecf-b54aa90235f2")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.12)
+			)
+			(justify left)
+		)
+	)
+	(fp_text user "D1"
+		(at 5.08 -1.6 90)
+		(layer "F.SilkS")
+		(uuid "528f4892-7550-5b61-bf6a-4c4a213237b1")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.12)
+			)
+			(justify left)
+		)
+	)
+	(fp_text user "DAT2"
+		(at 7.62 -1.6 90)
+		(layer "F.SilkS")
+		(uuid "151aa41f-287b-52cd-afa1-b027a12917b3")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.12)
+			)
+			(justify left)
+		)
+	)
+	(fp_text user "DET"
+		(at 10.16 -1.6 90)
+		(layer "F.SilkS")
+		(uuid "0afa4b1c-bae3-516b-b17a-9b2e36a866eb")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.12)
+			)
+			(justify left)
+		)
+	)
+	(pad "" np_thru_hole circle
+		(at -10.16 -17.78)
+		(size 2.7 2.7)
+		(drill 2.7)
+		(layers "*.Cu" "*.Mask")
+		(uuid "40870ef3-537b-5f4e-a8c1-dafebd8089ef")
+	)
+	(pad "" np_thru_hole circle
+		(at 10.16 -17.78)
+		(size 2.7 2.7)
+		(drill 2.7)
+		(layers "*.Cu" "*.Mask")
+		(uuid "3ced7865-900d-5531-94d1-b615f9edabdd")
+	)
+	(pad "1" thru_hole rect
+		(at -10.16 0)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "92eb2e17-5186-570c-a24a-e8650880a8bb")
+	)
+	(pad "2" thru_hole circle
+		(at -7.62 0)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "135343d2-91e8-5271-a831-eec400a0e645")
+	)
+	(pad "3" thru_hole circle
+		(at -5.08 0)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "15b3b86f-aeb6-5243-8f04-7fdcc7a10322")
+	)
+	(pad "4" thru_hole circle
+		(at -2.54 0)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "06991281-b78e-57b3-b291-b263010e39ba")
+	)
+	(pad "5" thru_hole circle
+		(at 0 0)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "a563325b-0024-544d-9762-4d27d7e5894d")
+	)
+	(pad "6" thru_hole circle
+		(at 2.54 0)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "741c3fef-c6f2-5059-9370-36269b4fa0e7")
+	)
+	(pad "7" thru_hole circle
+		(at 5.08 0)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "0431161a-b3a0-502d-8528-240c30ec15b7")
+	)
+	(pad "8" thru_hole circle
+		(at 7.62 0)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "0f242bd9-5962-5e58-b563-e4e2dd9834cd")
+	)
+	(pad "9" thru_hole circle
+		(at 10.16 0)
+		(size 1.7 1.7)
+		(drill 1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "0c198dfc-3fa7-5953-a568-f85c025bf4f8")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/../lib/3dmodels/Adafruit_4682_microSD.step"
+		(offset
+			(xyz -12.7 -2.54 2.5)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+	(model "${KICAD10_3DMODEL_DIR}/Connector_PinHeader_2.54mm.3dshapes/PinHeader_1x09_P2.54mm_Vertical.step"
+		(offset
+			(xyz -10.16 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 -90)
+		)
+	)
+)

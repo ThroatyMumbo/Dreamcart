@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "dccart")(type "KiCad")(uri "${KIPRJMOD}/../lib/dccart.pretty")(options "")(descr "Super Dreamcart parts"))
+)

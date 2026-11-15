@@ -2,7 +2,6 @@
 .venv/
 .history/
 build/
-production/
 __pycache__/
 hardware/models/
 hardware/n64/shell/out/
