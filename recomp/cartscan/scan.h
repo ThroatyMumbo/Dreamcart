@@ -38,6 +38,13 @@ typedef struct { uint32_t shift, os_cic_id, sp_fill, imem0, seed; } CsIpl3;
 // Where IPL3 copies ROM 0x1000; page0 is ROM page 0, and ipl3 (may be NULL) gets that IPL3's entry
 uint32_t cs_boot_load(const uint32_t *page0, const CsIpl3 **ipl3);
 
+#define IS_BREAK(w) (((w) & 0xFC00003Fu) == 0x0000000Du)
+// Any branch or jump, for entry.s's constants as they stand at its first loop
+static inline int cs_is_branch(uint32_t w) {
+    uint32_t op = w >> 26;
+    return op == 1 || (op >= 2 && op <= 7) || (op >= 0x14 && op <= 0x17) || (op == 0 && ((w & 63) == 8 || (w & 63) == 9));
+}
+
 Scan *cs_new(uint32_t rom_size, cs_page_fn page, void *ctx);
 void cs_feed(Scan *s, const uint32_t *words, uint32_t n);  // every ROM word once, in order from offset 0
 // Or the reader's whole-ROM pass: starts and pointer words sorted and unique as cs_feed collects them, ptrs only in

@@ -114,10 +114,14 @@ GFX_COLD static void cover_tri(const struct gfx_pv *a, const struct gfx_pv *b, c
     if ((m & scis_m) == scis_m) cover_full = scissor_drawn();
 }
 
+static int frame_rows;  // the frame's lowest scissor edge: the RDP writes no row of its color image below it
+
 void gfx_scissor(void) {
     float w = (float)g.cimg_w, h = (float)(g.cimg_w * 3 / 4);
     float x0 = (float)g.scis_ulx * 0.25f, y0 = (float)g.scis_uly * 0.25f;
     float x1 = (float)g.scis_lrx * 0.25f, y1 = (float)g.scis_lry * 0.25f;
+    int rows = ((int)g.scis_lry + 3) >> 2;
+    if (rows > frame_rows) frame_rows = rows;
     scis_on = x0 > 0.0f || y0 > 0.0f || x1 < w || y1 < h;
     scis_x0 = x0 > 0.0f ? x0 : -1e30f, scis_y0 = y0 > 0.0f ? y0 : -1e30f;
     scis_x1 = x1 < w ? x1 : 1e30f, scis_y1 = y1 < h ? y1 : 1e30f;
@@ -143,6 +147,7 @@ static void ensure_frame(void) {
     __builtin_memset(&drawn, tiny ? 0xFF : 0, sizeof drawn);
     cover_kx = tiny ? 0.0f : (float)GFX_COVER_COLS / (float)g.cimg_w;
     cover_ky = tiny ? 0.0f : (float)GFX_COVER_ROWS / (float)(g.cimg_w * 3 / 4);
+    frame_rows = 0;
     gfx_scissor();
     gfx_sink->frame_begin(g.cimg, (int)g.cimg_siz, (int)g.cimg_w, (int)(g.cimg_w * 3 / 4));  // 4:3; the scissor can change mid-frame
 }
@@ -160,7 +165,7 @@ void gfx_frame_begin(void) {
 
 void gfx_frame_end(void) {
     if (!framed) return;
-    gfx_sink->frame_end(&drawn);
+    gfx_sink->frame_end(&drawn, frame_rows);
 }
 
 // SETPRIMDEPTH's z as a vertex's depth: RDP z is sz * 128, and a perspective MP gives z/w = a + b/w
@@ -470,7 +475,7 @@ static void tri_slow(const struct gvtx *a, const struct gvtx *b, const struct gv
     to_cv(c, flat, &p[2]);
     int n = 3;
     uint16_t code = (a->clip | b->clip | c->clip) & clip_slow;
-    if ((code & CLIP_NEAR) && !(gfx_uc->cull_mask & CLIP_NEAR))  // NoN: x, y at the guard band cut what's behind the eye
+    if ((code & CLIP_NEAR) && gfx_uc->no_near)  // NoN: x, y at the guard band cut what's behind the eye
         code = (uint16_t)((code & ~CLIP_NEAR) | ((a->clip | b->clip | c->clip) & CLIP_XY));
     float ratio = code & CLIP_XY ? (float)(int16_t)dmem16(gfx_uc->clip_ratio) : 1.0f;  // x, y clip at the guard band
     for (int k = 0; k < 6 && n >= 3; k++) {

@@ -30,11 +30,22 @@ static void reg_effects(const RabbitizerInstruction *ri, uint32_t raw, uint64_t 
 }
 
 static uint64_t undef_g, undef_f;  // what reads_undefined's hit read
+static uint64_t *need_g, *need_f;   // per raw (2) function: what it reads that no call passes; NULL: calls read nothing
+static uint64_t acc_g, acc_f;       // reads_undefined's every undefined read, when accumulating
+
+// What a jal at v makes its raw callee read
+static void callee_reads(uint32_t v, uint32_t raw, uint64_t *gr, uint64_t *fr) {
+    *gr = *fr = 0;
+    if (!need_g || raw >> 26 != 3) return;
+    int many;
+    int k = find_u32(M.start, M.nfunc, ov_resolve(v, j_target(v, raw), &many));
+    if (k >= 0 && !many && M.raw[k] == 2) *gr = need_g[k], *fr = need_f[k];
+}
 
 // The first instruction on some path that reads a register before writing it, given what is defined at entry and
-// after each call; 0 if none
+// after each call; 0 if none. accumulate: go on past each hit, gathering every such read in acc_g/acc_f
 static uint32_t reads_undefined(uint32_t lo, uint32_t hi, uint64_t g_entry, uint64_t f_entry, uint64_t g_call,
-                                uint64_t f_call) {
+                                uint64_t f_call, int accumulate) {
     uint32_t n = (hi - lo) / 4;
     if (n < 2) return 0;
     uint64_t *gin = xl_alloc(16 * (size_t)n + 16), *fin = gin + n + 1;
@@ -52,14 +63,24 @@ static uint32_t reads_undefined(uint32_t lo, uint32_t hi, uint64_t g_entry, uint
             if (!queued[s_]) queued[s_] = 1, todo[nt++] = s_;                                              \
         }                                                                                                  \
     } while (0)
-    while (nt && !found) {
+#define HIT(at, mg_, mf_)                                                     \
+    do {                                                                      \
+        uint64_t hg_ = (mg_), hf_ = (mf_);                                    \
+        if (!found) found = (at), undef_g = hg_, undef_f = hf_;               \
+        acc_g |= hg_, acc_f |= hf_;                                           \
+    } while (0)
+    while (nt && (accumulate || !found)) {
         uint32_t i = todo[--nt], v = lo + 4 * i, raw = word(v);
         queued[i] = 0;
         uint64_t g = gin[i], f = fin[i], gr, fr, gw, fw;
         RabbitizerInstruction ri;
         decode(&ri, raw, v);
         reg_effects(&ri, raw, &gr, &fr, &gw, &fw);
-        if ((gr & ~g & ~BIT(0)) || (fr & ~f)) { found = v, undef_g = gr & ~g & ~BIT(0), undef_f = fr & ~f; break; }
+        if ((gr & ~g & ~BIT(0)) || (fr & ~f)) {
+            HIT(v, gr & ~g & ~BIT(0), fr & ~f);
+            if (!accumulate) break;
+            g |= gr, f |= fr;
+        }
         g |= gw, f |= fw;
         const RabbitizerInstrDescriptor *d = ri.descriptor;
         int branch = RabbitizerInstrDescriptor_isBranch(d), jump = RabbitizerInstrDescriptor_isJump(d);
@@ -74,8 +95,9 @@ static uint32_t reads_undefined(uint32_t lo, uint32_t hi, uint64_t g_entry, uint
             decode(&slot, sraw, v + 4);
             reg_effects(&slot, sraw, &sgr, &sfr, &sgw, &sfw);
             if ((sgr & ~g & ~BIT(0)) || (sfr & ~f)) {
-                found = v + 4, undef_g = sgr & ~g & ~BIT(0), undef_f = sfr & ~f;
-                break;
+                HIT(v + 4, sgr & ~g & ~BIT(0), sfr & ~f);
+                if (!accumulate) break;
+                sg |= sgr, sf |= sfr;
             }
             sg |= sgw, sf |= sfw;
         }
@@ -84,6 +106,12 @@ static uint32_t reads_undefined(uint32_t lo, uint32_t hi, uint64_t g_entry, uint
             continue;
         }
         if (RabbitizerInstrDescriptor_doesLink(d)) {
+            uint64_t cg, cf;  // a raw callee reads what it takes here: THPS2's table builder passes on its bit buffer
+            callee_reads(v, raw, &cg, &cf);
+            if ((cg & ~sg & ~BIT(0)) || (cf & ~sf)) {
+                HIT(v, cg & ~sg & ~BIT(0), cf & ~sf);
+                if (!accumulate) break;
+            }
             FLOW(i + 2, g_call, f_call);
             continue;
         }
@@ -107,6 +135,7 @@ static uint32_t reads_undefined(uint32_t lo, uint32_t hi, uint64_t g_entry, uint
                     if (tg >= lo && tg < hi) FLOW((tg - lo) / 4, sg, sf);
                 }
     }
+#undef HIT
 #undef FLOW
     xl_free(gin), xl_free(todo), xl_free(seen);
     return found;
@@ -114,12 +143,35 @@ static uint32_t reads_undefined(uint32_t lo, uint32_t hi, uint64_t g_entry, uint
 
 // IDO passes a static callee's arguments in temporaries (libultra's _pullSubFrame takes its command pointer in t0)
 static int reads_unpassed(uint32_t lo, uint32_t hi) {
-    return reads_undefined(lo, hi, G_PASSED, F_PASSED, ALL, ALL) != 0;
+    return reads_undefined(lo, hi, G_PASSED, F_PASSED, ALL, ALL, 0) != 0;
 }
 
 // IDO keeps temporaries live across a call to a static callee that leaves them alone (naudio's seq in t4)
 static uint32_t keeps_unsaved(uint32_t lo, uint32_t hi) {
-    return reads_undefined(lo, hi, ALL, ALL, BIT(0) | G_RELOAD | BIT(31), F_RELOAD);
+    uint64_t *g = need_g;
+    need_g = NULL;  // raw callees' reads count only for raw_pass
+    uint32_t at = reads_undefined(lo, hi, ALL, ALL, BIT(0) | G_RELOAD | BIT(31), F_RELOAD, 0);
+    need_g = g;
+    return at;
+}
+
+// Whether the function at fi jals a raw (2) function
+static int calls_raw(uint32_t fi) {
+    for (uint32_t v = M.start[fi]; v < M.end[fi]; v += 4) {
+        uint64_t g, f;
+        callee_reads(v, word(v), &g, &f);
+        if (g | f) return 1;
+    }
+    return 0;
+}
+
+// need_g/need_f[fi]: every register fi reads that no call passes, its raw callees' included
+static int gather_need(uint32_t fi) {
+    acc_g = acc_f = 0;
+    reads_undefined(M.start[fi], M.end[fi], G_PASSED, F_PASSED, ALL, ALL, 1);
+    int grew = (acc_g & ~need_g[fi]) || (acc_f & ~need_f[fi]);
+    need_g[fi] |= acc_g, need_f[fi] |= acc_f;
+    return grew;
 }
 
 static int low_bit(uint64_t m) {
@@ -147,7 +199,19 @@ void keep_pass(void) {
 }
 
 // M.raw: 1 for a bal target, 2 for a function that reads registers no call passes
+static int is_hooked(uint32_t fi) {
+    for (uint32_t h = 0; h < M.nhook; h++)
+        if (M.hook_addr[h] == M.start[fi]) return 1;
+    return 0;
+}
+
+void abi_release(void) {
+    xl_free(need_g), xl_free(need_f);
+    need_g = need_f = NULL;
+}
+
 void raw_pass(void) {
+    abi_release();
     M.raw = xl_alloc(M.nfunc + 1);
     memset(M.raw, 0, M.nfunc + 1);
     for (uint32_t fi = 0; fi < M.nfunc; fi++)
@@ -158,11 +222,27 @@ void raw_pass(void) {
         }
     uint32_t nunpassed = 0;
     for (uint32_t fi = 0; fi < M.nfunc; fi++) {
-        int hooked = 0;
-        for (uint32_t h = 0; h < M.nhook && !hooked; h++) hooked = M.hook_addr[h] == M.start[fi];
-        if (!hooked && !M.raw[fi] && reads_unpassed(M.start[fi], M.end[fi])) {
+        if (!is_hooked(fi) && !M.raw[fi] && reads_unpassed(M.start[fi], M.end[fi])) {
             M.raw[fi] = 2, nunpassed++;
             xl_log("  f_%08X takes registers no ABI call passes\n", (unsigned)M.start[fi]);
+        }
+    }
+    need_g = xl_alloc(8 * ((size_t)M.nfunc + 1)), need_f = xl_alloc(8 * ((size_t)M.nfunc + 1));
+    memset(need_g, 0, 8 * ((size_t)M.nfunc + 1)), memset(need_f, 0, 8 * ((size_t)M.nfunc + 1));
+    for (uint32_t fi = 0; fi < M.nfunc; fi++)
+        if (M.raw[fi] == 2) gather_need(fi);
+    for (int changed = nunpassed != 0; changed;) {  // a caller that hands a raw callee registers it was given takes them
+        changed = 0;
+        for (uint32_t fi = 0; fi < M.nfunc; fi++) {
+            if (M.raw[fi] == 1 || is_hooked(fi) || !calls_raw(fi)) continue;
+            if (!M.raw[fi]) {
+                uint32_t at = reads_undefined(M.start[fi], M.end[fi], G_PASSED, F_PASSED, ALL, ALL, 0);
+                if (!at) continue;
+                M.raw[fi] = 2, nunpassed++, changed = 1;
+                xl_log("  f_%08X hands its raw callee %s%d at %08X\n", (unsigned)M.start[fi], undef_g ? "r" : "f",
+                       low_bit(undef_g ? undef_g : undef_f), (unsigned)at);
+            }
+            if (gather_need(fi)) changed = 1;
         }
     }
     if (nunpassed) xl_log("  %u functions read registers a call doesn't pass: called with every register\n", nunpassed);

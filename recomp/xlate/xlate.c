@@ -211,6 +211,7 @@ static void free_meta(void) {
     for (size_t i = 0; i < sizeof v / sizeof *v; i++)
         xl_free(v[i]);
     memset(&M, 0, sizeof M);
+    abi_release();
 }
 
 void load_meta(const uint8_t *b, size_t len) {

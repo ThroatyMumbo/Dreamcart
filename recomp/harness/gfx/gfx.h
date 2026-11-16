@@ -29,10 +29,11 @@ struct gfx_ucode {
     uint8_t special1_mvp;  // F3DEX2 2.04H: G_SPECIAL_1 recomputes MP; other F3DEX2s treat it as a no-op
     uint8_t texgen_fixed;  // F3DEX2 2.08: G_TEXTURE_GEN_LINEAR keeps S and T (2.04's BUG_TEXGEN_LINEAR_CLOBBER_S_T)
     uint8_t point_lights;  // F3DEX2 2.08PL: G_LIGHTING_POSITIONAL lights one light at a time, point lights among them
+    uint8_t no_near;       // NoN: CLIP_NEAR marks w <= 0 and nothing clips at the near plane; cull_mask says if CULLDL tests it
 };
 extern const struct gfx_ucode *gfx_uc;
 
-#define CLIP_NEAR 0x40u  // gvtx.clip's z <= -w; under F3DEX.NoN (no near plane in cull_mask) w <= 0 instead
+#define CLIP_NEAR 0x40u  // gvtx.clip's z <= -w; under NoN (gfx_uc->no_near) w <= 0 instead
 
 // 128 bytes on 32-byte lines: the triangle tests read only the first line, a cached pv_of only the third
 struct __attribute__((aligned(32))) gvtx {

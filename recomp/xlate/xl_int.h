@@ -70,5 +70,6 @@ uint32_t j_target(uint32_t vram, uint32_t raw);
 // xl_abi.c: M.raw and M.keep, which functions take or keep registers outside the ABI
 void raw_pass(void);
 void keep_pass(void);
+void abi_release(void);
 
 #endif

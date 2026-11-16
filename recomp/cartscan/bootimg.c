@@ -34,22 +34,25 @@ const char *bi_build(uint32_t *img, cs_page_fn page, void *ctx, uint32_t rom_siz
     const CsIpl3 *ipl;
     bi->entry = cs_boot_load(page(ctx, 0), &ipl);
     bi->sp_fill = ipl->sp_fill, bi->imem0 = ipl->imem0;
-    uint32_t regs[32], have = 0;
-    int jr = -1, done = 0;
+    uint32_t regs[32], have = 0, t0 = 0, t1 = 0, have_bss = 0, jal = 0;
+    int jr = -1, done = 0, held = 0, bss_end = 0;
     for (int i = 0; i < 32 && !done; i++) {
         uint32_t w = rom_w(page, ctx, 0x1000 / 4 + i), op = w >> 26, rs = (w >> 21) & 31, rt = (w >> 16) & 31;
+        if (!held && (cs_is_branch(w) || (op >= 0x28 && op <= 0x2F))) held = 1, t0 = regs[8], t1 = regs[9], have_bss = have;
+        if ((w & 0xFFFF07FFu) == 0x0109002Bu) bss_end = 1;  // sltu ?, t0, t1: GCC crt0's $t1 is the end
         if (op == OP_LUI) regs[rt] = (w & 0xFFFF) << 16, have |= 1u << rt;
         else if (op == OP_ADDIU && rs == 0) regs[rt] = (uint32_t)(int32_t)(int16_t)w, have |= 1u << rt;  // li: DK64's bss size
         else if (op == OP_ORI && rs == 0) regs[rt] = w & 0xFFFF, have |= 1u << rt;
         else if (op == OP_ADDIU && rs == rt && (have >> rt & 1)) regs[rt] += (uint32_t)(int32_t)(int16_t)w;
         else if (op == OP_ORI && rs == rt && (have >> rt & 1)) regs[rt] |= w & 0xFFFF;
-        if (jr >= 0) done = 1;
+        if (jr >= 0 || jal) done = 1;
         else if (op == 0 && (w & 63) == 8) jr = rs;
+        else if (op == 3) jal = 0x80000000u | (w & 0x3FFFFFFu) << 2;  // THPS2's crt0: jal main; break
     }
-    if (!done) return "entry: no jr in the first instructions";
-    if (!(have >> jr & 1) || !(have >> 8 & 1) || !(have >> 9 & 1) || !(have >> 29 & 1))
+    if (!done) return "entry: no jr or jal in the first instructions";
+    if ((jr >= 0 && !(have >> jr & 1)) || !(have_bss >> 8 & 1) || !(have_bss >> 9 & 1) || !(have >> 29 & 1))
         return "entry: main, bss or sp not built from constants";
-    bi->main = regs[jr], bi->bss = regs[8], bi->bss_size = regs[9], bi->sp = regs[29];
+    bi->main = jr >= 0 ? regs[jr] : jal, bi->bss = t0, bi->bss_size = bss_end ? t1 - t0 : t1, bi->sp = regs[29];
     memset(img, 0, BOOT_RDRAM);
     ipl3_stage2(img, page(ctx, 0), ipl->seed, ipl->os_cic_id == 6105 ? 4 : 0);
     uint32_t off = bi->entry - 0x80000000u, n = IPL3_COPY;

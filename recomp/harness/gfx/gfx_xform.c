@@ -330,7 +330,7 @@ GFX_HOT(01) void gfx_load_vtx(uint32_t phys, uint32_t n, uint32_t v0, uint32_t t
     uint8_t ortho = g.mp[0][3] == 0.0f && g.mp[1][3] == 0.0f && g.mp[2][3] == 0.0f;
     float ratio = (float)clip_ratio;
     gfx_guard_band(ratio);
-    int no_near = !(gfx_uc->cull_mask & CLIP_NEAR);  // F3DEX.NoN: the near bit marks a vertex behind the eye instead
+    int no_near = gfx_uc->no_near;  // NoN: the near bit marks a vertex behind the eye instead
     uint16_t keep = no_near ? (uint16_t)~CLIP_NEAR : 0xFFFFu, behind = no_near ? CLIP_NEAR : 0;
     uint8_t b = (uint8_t)(bt - batches);
     xmtrx_load(g.mp);

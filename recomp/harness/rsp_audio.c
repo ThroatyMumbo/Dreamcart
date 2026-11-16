@@ -59,6 +59,12 @@ uint32_t rsp_audio_task(uint8_t *dmem, uint32_t hz) {
         sim_puts("\n");
         os_die("rsp audio: microcode is not the common audio ABI, a known nead or naudio", rd(data + 0x10));
     }
+    static int said = -1;
+    if (abi != said) {
+        sim_hex("rsp audio: abi", (uint32_t)abi), sim_hex(" ucode data", data);
+        sim_puts("\n");
+        said = abi;
+    }
     hle.dram = (unsigned char *)(0x80000000u + t_rdram_bias);
     hle.dmem = dmem;
     hle.imem = dmem + 0x1000;

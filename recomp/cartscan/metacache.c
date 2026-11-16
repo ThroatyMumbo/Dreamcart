@@ -14,7 +14,7 @@ static uint32_t crc_u32(uint32_t c, uint32_t v) {
 }
 
 uint32_t cache_version(void) {
-    static const char ver[] = "cartboot cache 12";  // bump it when the scan changes
+    static const char ver[] = "cartboot cache 14";  // bump it when the scan changes
     uint32_t c = cs_crc32(0, ver, sizeof ver - 1), nv = 0, nr = 0;
     for (uint32_t i = 0; i < sig_nsyms; i++) {
         const SigSym *s = &sig_syms[i];
@@ -38,7 +38,8 @@ uint8_t *cache_build(const CsResult *scan, const HmResult *hm, const uint8_t *ra
                      const uint32_t header[16], uint32_t *len) {
     CbHooks hk;
     hooks_from_hm(hm, &hk);
-    uint32_t need = 4 * (3 + 16 + 4 + 1 + 3 * scan->nseg + 1 + 2 * scan->nfunc + 1 + 2 * hk.n + 1 + 1 + 1) +
+    uint32_t need = 4 * (3 + 16 + 4 + 1 + 3 * scan->nseg + 1 + 2 * scan->nfunc + 1 + 1 + scan->nunplaced + 2 * hk.n +
+                         1 + 1 + 1) +
                     scan->nfunc + 4;
     for (uint32_t i = 0; i < scan->ntab; i++) need += 4 * (3 + scan->tab[i].n);
     Buf o = {cs_alloc(need), 0, need};
@@ -54,6 +55,8 @@ uint8_t *cache_build(const CsResult *scan, const HmResult *hm, const uint8_t *ra
         u32(&o, scan->tab[i].jr), u32(&o, scan->tab[i].table), u32(&o, scan->tab[i].n);
         for (uint32_t k = 0; k < scan->tab[i].n; k++) u32(&o, scan->tab[i].targets[k]);
     }
+    u32(&o, scan->nunplaced);
+    for (uint32_t i = 0; i < scan->nunplaced; i++) u32(&o, scan->unplaced[i]);
     u32(&o, hk.n);
     for (uint32_t i = 0; i < hk.n; i++) u32(&o, hk.addr[i]), u32(&o, hk.pol[i]);
     u32(&o, raw != NULL);
@@ -103,6 +106,10 @@ int cache_parse(const uint8_t *blob, uint32_t len, uint32_t rom_size, const uint
         v->r.tab[i].targets = pool;
         for (uint32_t k = 0; k < v->r.tab[i].n; k++) *pool++ = NEXT();
     }
+    v->r.nunplaced = NEXT();
+    if (!ok || v->r.nunplaced > (uint32_t)(end - p) / 4) return 0;
+    v->r.unplaced = pool;
+    for (uint32_t i = 0; i < v->r.nunplaced; i++) *pool++ = NEXT();
     v->hk.n = NEXT();
     if (!ok || v->hk.n > (uint32_t)(end - p) / 8) return 0;
     v->hk.addr = cs_alloc((v->hk.n + 1) * 4), v->hk.pol = cs_alloc((v->hk.n + 1) * 2);

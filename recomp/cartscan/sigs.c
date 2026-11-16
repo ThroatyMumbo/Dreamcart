@@ -625,16 +625,23 @@ static uint32_t m_init(M *m, const CsResult *scan, cs_page_fn page, void *ctx, u
 }
 
 // Every j/jal target in the scanned segments, sorted and hashed, with a failed-signature bitmap per target
-static void collect_targets(M *m, int only) {
+static void collect_target(M *m, uint32_t addr, uint32_t *cap) {
+    uint32_t w;
+    if (!word(m, addr, &w) || (w >> 26 != OP_J && w >> 26 != OP_JAL)) return;
+    if (m->ntargets == *cap) m->targets = cs_realloc(m->targets, (*cap *= 2) * 4);
+    m->targets[m->ntargets++] = mres(m, addr, (addr & 0xF0000000u) | ((w & 0x03FFFFFFu) << 2));
+}
+
+static void collect_targets(M *m, const CsResult *scan, int only) {
     uint32_t cap = 1024;
     m->targets = cs_alloc(cap * 4);
-    for (uint32_t si = 0; si < m->nseg; si++)
-        for (uint32_t addr = m->seg[si].lo; addr < m->seg[si].hi && (only < 0 || si == (uint32_t)only); addr += 4) {
-            uint32_t w;
-            if (!word(m, addr, &w) || (w >> 26 != OP_J && w >> 26 != OP_JAL)) continue;
-            if (m->ntargets == cap) m->targets = cs_realloc(m->targets, (cap *= 2) * 4);
-            m->targets[m->ntargets++] = mres(m, addr, (addr & 0xF0000000u) | ((w & 0x03FFFFFFu) << 2));
-        }
+    if (only >= 0) {  // a run-time region: its functions' words only
+        for (uint32_t i = 0; i < scan->nfunc; i++)
+            for (uint32_t addr = scan->func[i].start; addr < scan->func[i].end; addr += 4)
+                if (addr - m->seg[only].lo < m->seg[only].hi - m->seg[only].lo) collect_target(m, addr, &cap);
+    } else
+        for (uint32_t si = 0; si < m->nseg; si++)
+            for (uint32_t addr = m->seg[si].lo; addr < m->seg[si].hi; addr += 4) collect_target(m, addr, &cap);
     qsort(m->targets, m->ntargets, 4, cmp_u32);
     uint32_t nt = 0;
     for (uint32_t i = 0; i < m->ntargets; i++)
@@ -719,14 +726,18 @@ static void os_symbols(HmResult *r);
 HmResult *hm_run_seg(const CsResult *scan, int only, cs_page_fn page, void *ctx, uint32_t rom_size) {
     static M m;
     uint32_t nv = m_init(&m, scan, page, ctx, rom_size);
-    collect_targets(&m, only);
+    collect_targets(&m, scan, only);
     Fast fast;
     fast_init(&fast, m.vpat, nv);
     uint8_t *hit = cs_alloc(sig_nsyms + 1);
     memset(hit, 0, sig_nsyms + 1);
-    for (uint32_t si = 0; si < m.nseg; si++)
-        for (uint32_t addr = m.seg[si].lo; addr < m.seg[si].hi && (only < 0 || si == (uint32_t)only); addr += 4)
-            match_at(&m, &fast, hit, addr);
+    if (only >= 0) {  // a run-time region (rgn.c): its scanned starts, not each word of the data around its code
+        for (uint32_t i = 0; i < scan->nfunc; i++)
+            if (scan->func[i].start - m.seg[only].lo < m.seg[only].hi - m.seg[only].lo)
+                match_at(&m, &fast, hit, scan->func[i].start);
+    } else
+        for (uint32_t si = 0; si < m.nseg; si++)
+            for (uint32_t addr = m.seg[si].lo; addr < m.seg[si].hi; addr += 4) match_at(&m, &fast, hit, addr);
     fast_free(&fast);
     cs_release(hit);
     HmResult *r = hm_result(&m);

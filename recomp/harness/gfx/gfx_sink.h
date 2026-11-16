@@ -35,7 +35,8 @@ struct gfx_sink {
     void (*poly)(const struct gfx_poly *p);
     void (*tri)(const struct gfx_pv *a, const struct gfx_pv *b, const struct gfx_pv *c);
     void (*tex_upload)(uint16_t id, int w, int h, int fmt, const uint16_t *texels);
-    void (*frame_end)(const struct gfx_cover *drawn);  // the cells it drew in: the color image keeps the rest
+    // the cells it drew in (the color image keeps the rest), and how many rows of the color image it can have written
+    void (*frame_end)(const struct gfx_cover *drawn, int rows);
 };
 
 extern const struct gfx_sink *gfx_sink;  // dc/gfx_pvr.c's, set before the first task

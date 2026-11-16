@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "gfx_sink.h"
 
-struct gfx_pvr_stats { uint32_t headers, tris, uploads, dropped, missing_tex, vram_full, readback_rows, kept_frames; uint64_t wait_us; uint32_t entries[3]; };  // entries: OP, PT, TR
+struct gfx_pvr_stats { uint32_t headers, tris, uploads, dropped, missing_tex, vram_full, readback_rows, readback_skipped, kept_frames; uint64_t wait_us; uint32_t entries[3]; };  // entries: OP, PT, TR
 
 void gfx_pvr_init(void);  // 640x480 RGB565, PVR lists OP/PT/TR, no translucent autosort
 int gfx_pvr_idle(void);   // from idle waits: moves the last frame back into RDRAM a row at a time; 0 once it's all there

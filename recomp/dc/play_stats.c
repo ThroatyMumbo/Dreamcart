@@ -54,21 +54,22 @@ void stats_report(void) {
     if (t - win_start < REPORT_US) return;
     stats_flush();
     stats_report_audio();
-    static uint32_t rows0;
+    static uint32_t rows0, skipped0;
     uint64_t span = t - win_start, pvr_wait = gfx_pvr_stats.wait_us - wait0;
     uint32_t fields = (uint32_t)(os_now() / rcp_vi_period());
     uint64_t busy = w.gfx_us + w.audio_us + w.pi_us + w.idle_us + w.rep_us;
     uint64_t fetched = romcache_stats.fetched_bytes;
     printf("play %2lu: fields %3lu (vi intrs %3lu) frames %2lu audio %2lu | ms gfx %3lu (pvr wait %3lu) audio %3lu pi %3lu (%lu KB, cart %lu KB) "
-           "idle %3lu game %3lu | tris/frame %lu fb rows back %lu\n",
+           "idle %3lu game %3lu | tris/frame %lu fb rows back %lu (%lu the game's)\n",
            (unsigned long)stats_second, (unsigned long)(fields - fields0), (unsigned long)(rcp_vi_intrs - vi_intrs0),
            (unsigned long)w.gfx_tasks,
            (unsigned long)w.audio_tasks, (unsigned long)(w.gfx_us / 1000), (unsigned long)(pvr_wait / 1000),
            (unsigned long)(w.audio_us / 1000), (unsigned long)(w.pi_us / 1000), (unsigned long)(w.pi_bytes >> 10),
            (unsigned long)((fetched - fetched0) >> 10),
            (unsigned long)(w.idle_us / 1000), (unsigned long)((span > busy ? span - busy : 0) / 1000),
-           (unsigned long)(w.gfx_tasks ? w.tris / w.gfx_tasks : 0), (unsigned long)(gfx_pvr_stats.readback_rows - rows0));
-    rows0 = gfx_pvr_stats.readback_rows;
+           (unsigned long)(w.gfx_tasks ? w.tris / w.gfx_tasks : 0), (unsigned long)(gfx_pvr_stats.readback_rows - rows0),
+           (unsigned long)(gfx_pvr_stats.readback_skipped - skipped0));
+    rows0 = gfx_pvr_stats.readback_rows, skipped0 = gfx_pvr_stats.readback_skipped;
     report_gfx_notes();
     fflush(stdout);
     memset(&w, 0, sizeof w);

@@ -89,11 +89,46 @@ static uint16_t rb_row[FB_W] __attribute__((aligned(32)));
 static volatile int rb_inflight;
 static int rb_dead;
 static uint32_t rb_y, rb_left, rb_n, rb_pairs, rb_src, rb_step_x, rb_step_y, *rb_dst;  // rb_y carries across frames
+static uint32_t rb_rows;  // the finished frame's scissor bottom: a color image may be shorter than 4:3
+
+// What readback last left in each row of recent color images. Rows land after the frame, so a row the game has
+// changed since is no longer framebuffer (THPS2 frees its menu buffers and loads a level there): it is skipped
+#define RB_IMGS 4
+static struct rb_img { uint32_t cimg, w, used; uint32_t hash[FB_H]; uint8_t known[FB_H]; } rb_imgs[RB_IMGS], *rb_img;
+static uint32_t rb_clock;
+
+static uint32_t row_hash(const uint32_t *d, uint32_t n) {
+    uint32_t h = 2166136261u;
+    for (uint32_t i = 0; i < n; i++) h = (h ^ d[i]) * 16777619u;
+    return h;
+}
+
+static struct rb_img *rb_img_of(uint32_t cimg, uint32_t w) {
+    struct rb_img *m = &rb_imgs[0];
+    for (int i = 0; i < RB_IMGS; i++) {
+        if (rb_imgs[i].cimg == cimg && rb_imgs[i].w == w) {
+            m = &rb_imgs[i];
+            m->used = ++rb_clock;
+            return m;
+        }
+        if (rb_imgs[i].used < m->used) m = &rb_imgs[i];
+    }
+    m->cimg = cimg, m->w = w, m->used = ++rb_clock;
+    __builtin_memset(m->known, 0, sizeof m->known);
+    return m;
+}
 
 static void rb_done(void *data) {
     (void)data;
     uint32_t *d = rb_dst + rb_y * rb_pairs;  // RDRAM words hold their two halves big-endian
-    for (uint32_t x = 0; x < rb_pairs * 2; x += 2) *d++ = to5551(rb_row[x * rb_step_x]) << 16 | to5551(rb_row[(x + 1) * rb_step_x]);
+    uint32_t now = row_hash(d, rb_pairs);
+    if (rb_img->known[rb_y] && now != rb_img->hash[rb_y]) {
+        rb_img->hash[rb_y] = now;
+        gfx_pvr_stats.readback_skipped++;
+    } else {
+        for (uint32_t x = 0; x < rb_pairs * 2; x += 2) d[x / 2] = to5551(rb_row[x * rb_step_x]) << 16 | to5551(rb_row[(x + 1) * rb_step_x]);
+        rb_img->hash[rb_y] = row_hash(d, rb_pairs), rb_img->known[rb_y] = 1;
+    }
     rb_y = rb_y + 1 < rb_n ? rb_y + 1 : 0;
     rb_left--;
     gfx_pvr_stats.readback_rows++;
@@ -135,9 +170,12 @@ static void readback_retarget(void) {
     if (!rb_cimg || rb_dead) return;
     rb_src = gfx_pvr_front();
     rb_step_x = FB_W / (uint32_t)rb_w, rb_step_y = FB_H / (uint32_t)rb_h, rb_pairs = (uint32_t)rb_w / 2;
-    if (rb_n != (uint32_t)rb_h || rb_y >= (uint32_t)rb_h) rb_y = 0;
-    rb_n = rb_left = (uint32_t)rb_h;
+    uint32_t n = rb_rows < (uint32_t)rb_h ? rb_rows : (uint32_t)rb_h;
+    if (!n) return;
+    if (rb_n != n || rb_y >= n) rb_y = 0;
+    rb_n = rb_left = n;
     rb_dst = (uint32_t *)(0x80000000u + rb_cimg + t_rdram_bias);
+    rb_img = rb_img_of(rb_cimg, (uint32_t)rb_w);
 }
 
 #define DRAWN_N 4  // a triple-buffered swap chain plus a render target
@@ -248,7 +286,7 @@ static void p_frame_begin(uint32_t cimg, int siz, int w, int h) {
     readback_retarget();
     int fits = siz == 2 && w > 0 && h > 0 && w <= FB_W && h <= FB_H && !(FB_W % w) && !(FB_H % h) && !(w & 1)
                && cimg + (uint32_t)(w * h * 2) <= RDRAM_BYTES;
-    rb_cimg = fits ? cimg : 0, rb_w = w, rb_h = h;
+    rb_cimg = fits ? cimg : 0, rb_w = w, rb_h = h, rb_rows = 0;
     if (w != frame_w || h != frame_h) held = 0, prev_drawn = (struct gfx_cover){ { 0 } };
     frame_w = w, frame_h = h;
     pvr_scene_begin();
@@ -373,7 +411,8 @@ static int hold_last_frame(const struct gfx_cover *d) {
     return fresh;
 }
 
-static void p_frame_end(const struct gfx_cover *drawn) {
+static void p_frame_end(const struct gfx_cover *drawn, int rows) {
+    rb_rows = rows > 0 ? (uint32_t)rows : 0;
     pvr_list_finish();
     int fresh = hold_last_frame(drawn);
     for (uint32_t i = 0; i < n_under; i++) tr.buf[under[i]][1] |= (uint32_t)PVR_DEPTHCMP_ALWAYS << 29;  // mode1 31:29

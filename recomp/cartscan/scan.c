@@ -52,8 +52,8 @@ typedef struct {
     uint32_t ic_gen, ic_epoch;  // icache_segments' view of f: valid while the window winners stay put
     uint8_t ic_inval;
     Vec ic_calls;
-    uint32_t pv_gen;            // pointer_seeds' lui/addiu values in f
-    Vec pv;
+    uint32_t pv_gen;            // pointer_seeds' lui/addiu values in f, and those a jalr calls
+    Vec pv, pj;
 } Memo;
 
 enum { C_OTHER, C_JR, C_JAL, C_JALR, C_J, C_LUI, C_ADDIU, C_ORI, C_LW, C_ADDU, C_SLL, C_SLTIU };
@@ -592,6 +592,25 @@ static i64 table_bound(Scan *S, const Func *f, int reg, uint32_t pc, i64 floor) 
     return NONE;
 }
 
+// A register's one write in f, an epilogue restore aside: GCC hoists a table base out of the loop (THPS2). A
+// caller-saved one only with no call between it and use; argument, gp, sp and ra values may come from the caller
+static i64 sole_def(Scan *S, const Func *f, int reg, uint32_t use, Ins *out) {
+    int saved = (reg >= 16 && reg <= 23) || reg == 30;
+    if (!reg || (reg >= 4 && reg <= 7) || (reg >= 28 && reg != 30)) return NONE;
+    i64 at = NONE;
+    FOR_SEEN(f, pc) {
+        Ins i = ins(S, pc);
+        if (!writes(i, reg) || (I_CLASS(i.info) == C_LW && ((i.raw >> 21) & 31) == 29)) continue;
+        if (at != NONE) return NONE;
+        at = pc, *out = i;
+    }
+    if (at == NONE || saved) return at;
+    FOR_SEEN(f, pc) {
+        if (pc > at && pc < use && (ins(S, pc).info & I_LINK)) return NONE;
+    }
+    return at;
+}
+
 static Vec *jump_table(Scan *S, Func *f, uint32_t jr) {
     i64 floor = (i64)jr - 0x80;
     Ins jri = ins(S, jr), lw, add, d, d2;
@@ -613,12 +632,13 @@ static Vec *jump_table(Scan *S, Func *f, uint32_t jr) {
     for (int k = 0; k < 2 && !have; k++) {
         int r = pairs[k][0], other = pairs[k][1];
         i64 p = def_(S, f, add_pc, r, floor, &d);
+        if (p == NONE) p = sole_def(S, f, r, (uint32_t)add_pc, &d);
         if (p != NONE && I_CLASS(d.info) == C_LUI) {
             hi = (i64)(d.raw & 0xFFFF) << 16, ireg = other, have = 1;
             break;
         }
         if (p != NONE && I_CLASS(d.info) == C_ADDIU && lo == 0) {
-            i64 p2 = def_(S, f, p, (d.raw >> 21) & 31, floor, &d2);
+            i64 p2 = def_(S, f, p, (d.raw >> 21) & 31, p < floor ? p - 0x40 : floor, &d2);
             if (p2 != NONE && I_CLASS(d2.info) == C_LUI) {
                 hi = ((i64)(d2.raw & 0xFFFF) << 16) + simm(d.raw), ireg = other, have = 1;
                 break;
@@ -707,6 +727,22 @@ __attribute__((always_inline)) static inline int follow_branch(Scan *S, Func *f,
     return (i.raw >> 16) != 0x1000 && (i.raw >> 16) != 0x0401;
 }
 
+// A break ends the run if non-code follows it before any jump (THPS2's crt0: jal main; break; data); break; jr ra returns
+static int break_ends(Scan *S, uint32_t pc) {
+    for (uint32_t k = pc + 4; k < pc + 4 + 64 * 4; k += 4) {
+        dep(S, k);
+        Ins i = ins(S, k);
+        if (!ins_ok(i)) return 1;
+        if (i.raw == ERET) return 0;
+        if (i.info & I_DELAY) {
+            dep(S, k + 4);
+            Ins sl = ins(S, k + 4);
+            return !ins_ok(sl) || (sl.info & I_DELAY);
+        }
+    }
+    return 0;
+}
+
 // One straight run from pc until it ends or joins code already seen; 0 if it reaches a word that isn't code
 __attribute__((always_inline)) static inline int walk_run(Scan *S, Func *f, int ctx, uint32_t start, uint32_t pc, Vec *todo,
                                                           Vec *pending) {
@@ -726,7 +762,7 @@ __attribute__((always_inline)) static inline int walk_run(Scan *S, Func *f, int 
         }
         seen_add(f, pc);
         if (!(i.info & I_DELAY)) {
-            if (i.raw == ERET) return 1;
+            if (i.raw == ERET || (IS_BREAK(i.raw) && break_ends(S, pc))) return 1;
             pc += 4;
             continue;
         }
@@ -977,7 +1013,7 @@ static Seg *add_seg(Scan *S, uint32_t vram, i64 rom, uint32_t size, uint32_t how
 
 // Whether f invalidates the I-cache, and its jal pcs, from word() over its seen pcs; kept with f's memo entry while
 // the window table gives every address the same segment
-static Vec ic_scratch, pv_scratch;  // cs_free returns them: a console boot frees the scan's memory for good
+static Vec ic_scratch, pv_scratch, pj_scratch;  // cs_free returns them: a console boot frees the scan's memory for good
 
 static const Vec *ic_facts(Scan *S, const Func *f, int *inval) {
     if (S->wc.ver != S->segver + 1) segment_of(S, 0);
@@ -1403,7 +1439,7 @@ static Seed *pointer_seeds(Scan *S, uint32_t *nout) {
         if (!S->seg[i].real) hulls[2 * nh] = S->seg[i].lo, hulls[2 * nh + 1] = S->seg[i].hi, nh++;
     qsort(hulls, nh, 8, cmp_hull);
     for (uint32_t i = 0; i < nh; i++) his[i] = hulls[2 * i], ptr_span(S, hulls[2 * i], hulls[2 * i + 1]);
-    Vec data = {0}, code = {0};
+    Vec data = {0}, code = {0}, called = {0};
     i64 hi = -1;  // ptr_words and the hulls are both sorted: walk them together (the last hull with lo <= w)
     for (uint32_t k = 0; k < S->ptr_words.n; k++) {
         uint32_t w = S->ptr_words.v[k];
@@ -1428,34 +1464,42 @@ static Seed *pointer_seeds(Scan *S, uint32_t *nout) {
         i64 mi = f->memo_gen ? map_get(&S->memo_of, f->start) : NONE;
         Memo *m = mi != NONE && S->memo[mi].gen == f->memo_gen ? &S->memo[mi] : NULL;
         Vec *pv = m ? &m->pv : &pv_scratch;  // f's lui/addiu values depend only on its seen pcs, through the ins cache
+        Vec *pj = m ? &m->pj : &pj_scratch;  // the ones a jalr calls
         if (!m || m->pv_gen != m->gen) {
-            pv->n = 0;
-            uint32_t lui[32], have = 0;
+            pv->n = pj->n = 0;
+            uint32_t lui[32], val[32], have = 0, vhave = 0;
             FOR_SEEN(f, pc) {
                 Ins i = ins(S, pc);
-                int c = I_CLASS(i.info), rs = (i.raw >> 21) & 31, rt = (i.raw >> 16) & 31;
+                int c = I_CLASS(i.info), rs = (i.raw >> 21) & 31, rt = (i.raw >> 16) & 31, setv = 0;
                 if (c == C_LUI) {
-                    lui[rt] = (i.raw & 0xFFFF) << 16, have |= 1u << rt;
+                    lui[rt] = (i.raw & 0xFFFF) << 16, have |= 1u << rt, vhave &= ~(1u << rt);
                     continue;
                 }
+                uint32_t v = 0;
                 if ((c == C_ADDIU || c == C_ORI) && (have >> rs & 1))
-                    vpush(pv, lui[rs] + (c == C_ADDIU ? (uint32_t)simm(i.raw) : (i.raw & 0xFFFF)));
-                if (i.info & I_MODRT) have &= ~(1u << rt);
-                if (i.info & I_MODRD) have &= ~(1u << ((i.raw >> 11) & 31));
+                    v = lui[rs] + (c == C_ADDIU ? (uint32_t)simm(i.raw) : (i.raw & 0xFFFF)), vpush(pv, v), setv = 1;
+                if (c == C_JALR && (vhave >> rs & 1)) vpush(pj, val[rs]);
+                if (i.info & I_MODRT) have &= ~(1u << rt), vhave &= ~(1u << rt);
+                if (i.info & I_MODRD) have &= ~(1u << ((i.raw >> 11) & 31)), vhave &= ~(1u << ((i.raw >> 11) & 31));
+                if (setv) val[rt] = v, vhave |= 1u << rt;
             }
             if (m) m->pv_gen = m->gen;
         }
         int ctx = S->novl ? segment_of(S, f->start) : -1;
-        for (uint32_t k = 0; k < pv->n; k++) {
-            uint32_t ks[OV_MAX], nk = resolve(S, ctx, pv->v[k], ks);
-            for (uint32_t j = 0; j < nk; j++)
-                if (!map_has(&S->funcs, ks[j]) && in_hull(S, ks[j])) vpush(&code, ks[j]);
+        for (int l = 0; l < 2; l++) {
+            const Vec *src = l ? pj : pv;
+            for (uint32_t k = 0; k < src->n; k++) {
+                uint32_t ks[OV_MAX], nk = resolve(S, ctx, src->v[k], ks);
+                for (uint32_t j = 0; j < nk; j++)
+                    if (!map_has(&S->funcs, ks[j]) && in_hull(S, ks[j])) vpush(l ? &called : &code, ks[j]);
+            }
         }
     }
     vsortu(&code);  // data is already sorted and unique: it is filtered from ptr_words in order
+    vsortu(&called);
     const Map *tt = table_targets(S);
     Map out = {0};
-    Seed *seeds = cs_alloc((code.n + data.n + 1) * sizeof *seeds);
+    Seed *seeds = cs_alloc((code.n + data.n + called.n + 1) * sizeof *seeds);
     uint32_t n = 0;
     const Vec *lists[2] = {&code, &data};
     const uint32_t kinds[2] = {CS_ORIG_LUI, CS_ORIG_DATA};
@@ -1469,7 +1513,15 @@ static Seed *pointer_seeds(Scan *S, uint32_t *nout) {
                 seeds[n].v = v, seeds[n++].kind = kinds[l];
             }
         }
-    map_free(&out), vfree(&code), vfree(&data);
+    for (uint32_t k = 0; k < called.n; k++) {  // a jalr's target is a call, strong even inside its caller (THPS2's)
+        uint32_t v = called.v[k];
+        if (segment_of(S, v) >= 0 && !map_has(&out, v) && !map_has(tt, v) && !map_has(&S->tried, v)) {
+            map_add(&out, v);
+            mark_add(S, &S->strong, v);
+            seeds[n].v = v, seeds[n++].kind = CS_ORIG_LUI;
+        }
+    }
+    map_free(&out), vfree(&code), vfree(&data), vfree(&called);
     cs_release(hulls), cs_release(his), cs_release(sp);
     *nout = n;
     return seeds;
@@ -1672,6 +1724,13 @@ static uint32_t extend_back(Scan *S, uint32_t si) {
     }
 }
 
+static int case_of(const Func *f, uint32_t s) {
+    for (uint32_t i = 0; i < f->ntabs; i++)
+        for (uint32_t k = 0; k < f->tabs[i].targets.n; k++)
+            if (f->tabs[i].targets.v[k] == s) return 1;
+    return 0;
+}
+
 static uint32_t sweep(Scan *S, Vec *starts) {
     uint32_t added = 0;
     for (uint32_t si = 0; si < S->nseg; si++) {
@@ -1686,9 +1745,11 @@ static uint32_t sweep(Scan *S, Vec *starts) {
         i64 wlo, whi;
         window(&S->seg[si], &wlo, &whi);
         for (uint32_t b = 0; b < st.n; b++) {
-            uint32_t prev = st.v[b];
-            i64 hi = b + 1 < st.n ? (i64)st.v[b + 1] : whi;
+            uint32_t prev = st.v[b], nb = b + 1;
             Func *pf = get_func(S, prev);
+            if (!pf) continue;  // absorbed by a function swept earlier in this pass
+            while (nb < st.n && !map_has(&S->funcs, st.v[nb])) nb++;
+            i64 hi = nb < st.n ? (i64)st.v[nb] : whi;
             uint32_t end = skip_tail(S, pf->end, hi);
             if (end != pf->end) own(S, pf), dead_put(S, prev, end), pf->end = end;
             i64 p = end;
@@ -1711,7 +1772,13 @@ static uint32_t sweep(Scan *S, Vec *starts) {
                         }
                     }
                 int loop = f && !ret && f->end <= hi && skip_tail(S, f->end, hi) != f->end;  // infinite loop + dead epilogue
-                if (!f || f->end > hi || !f->nseen || f->maxseen < p + 4 || f->unres.n || !(ret || loop)) {
+                // a prologue over starts that are only its switch cases or what those reach (THPS2's, seeded from the table)
+                int over = f && f->end > hi ? ((uint32_t)w >> 16 == 0x27BD && (w & 0x8000) ? 1 : 2) : 0;
+                for (uint32_t k = nb; over == 1 && k < st.n && st.v[k] < f->end; k++)
+                    if (map_has(&S->funcs, st.v[k]) && (bits_has(&S->strong, st.v[k]) ||
+                                                         !(case_of(f, st.v[k]) || map_get(&S->origin, st.v[k]) == CS_ORIG_POINTER)))
+                        over = 2;
+                if (!f || over == 2 || f->end > whi || !f->nseen || f->maxseen < p + 4 || f->unres.n || !(ret || loop)) {
                     func_free(f);
                     mark_del(S, &S->starts, (uint32_t)p);
                     map_del(&S->bad, (uint32_t)p);
@@ -1721,6 +1788,7 @@ static uint32_t sweep(Scan *S, Vec *starts) {
                 map_put(&S->origin, (uint32_t)p, CS_ORIG_SWEEP);
                 vpush(starts, (uint32_t)p);
                 added++;
+                if (over) absorb(S, f);
                 uint32_t e2 = skip_tail(S, f->end, hi);
                 if (e2 != f->end) own(S, f), dead_put(S, (uint32_t)p, e2), f->end = e2;
                 p = f->end;
@@ -1866,13 +1934,14 @@ uint32_t cs_boot_load(const uint32_t *page0, const CsIpl3 **ipl3) {
     return page0[2] - v->shift;
 }
 
-// The boot segment ends where entry.s starts clearing BSS ($t0 at its first sw $zero, 0($t0)); else IPL3's 1 MB
+// The boot segment ends where entry.s starts clearing BSS ($t0 at its first branch or sw $zero, x($t0)); else 1 MB
 static uint32_t boot_size(Scan *S) {
     uint32_t hs = S->size - BOOT_ROM < BOOT_SIZE ? S->size - BOOT_ROM : BOOT_SIZE, t0 = 0;
-    int have = 0;
-    for (uint32_t k = 0; k < 8; k++) {
+    int have = 0, held = 0;
+    for (uint32_t k = 0; k < 16; k++) {
         uint32_t w = rom_word_at(S, BOOT_ROM / 4 + k);
-        if (w == 0xAD000000u) return have && t0 > S->entry && t0 - S->entry < hs ? t0 - S->entry : hs;
+        if (w >> 16 == 0xAD00) return have && t0 > S->entry && t0 - S->entry < hs ? t0 - S->entry : hs;
+        if (held || (held = cs_is_branch(w))) continue;
         if (w >> 16 == 0x3C08) t0 = w << 16, have = 1;
         else if (w >> 16 == 0x2508) t0 += (uint32_t)(int32_t)(int16_t)w;
         else if (w >> 16 == 0x3508) t0 |= w & 0xFFFF;
@@ -2024,7 +2093,7 @@ void cs_drop_work(Scan *S) {
     cs_release(S->pages);
     vfree(&S->rom_starts), vfree(&S->ptr_words);
     for (uint32_t i = 0; i < S->nmemo; i++)
-        func_free(S->memo[i].f), vfree(&S->memo[i].deps), vfree(&S->memo[i].ic_calls), vfree(&S->memo[i].pv);
+        func_free(S->memo[i].f), vfree(&S->memo[i].deps), vfree(&S->memo[i].ic_calls), vfree(&S->memo[i].pv), vfree(&S->memo[i].pj);
     cs_release(S->memo), cs_release(S->blk), cs_release(S->moved);
     map_free(&S->blk_pages), map_free(&S->memo_of);
     cs_release(S->rom_pages);
@@ -2038,5 +2107,5 @@ void cs_free(Scan *S) {
     cs_release(S->res.seg), cs_release(S->res.func), cs_release(S->res.tab), cs_release(S->res.unplaced);
     cs_release(S->res.pool);
     cs_release(S);
-    vfree(&ic_scratch), vfree(&pv_scratch);
+    vfree(&ic_scratch), vfree(&pv_scratch), vfree(&pj_scratch);
 }

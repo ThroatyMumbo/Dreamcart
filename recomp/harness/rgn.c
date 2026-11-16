@@ -348,6 +348,7 @@ static void cut(Rgn *R) {
 }
 
 static void scan(Rgn *R) {
+    uint64_t t0 = xl_now_us(), t1, t2;
     uint32_t size = R->hi - R->lo;
     Scan *s = cs_new(size, scan_page, R);
     cs_feed(s, rd_ptr(R->lo), size / 4);
@@ -364,10 +365,14 @@ static void scan(Rgn *R) {
         R->tab[i] = (CsTab){r->tab[i].jr, r->tab[i].table, r->tab[i].n, R->pool + at};
     }
     cs_free(s);
+    t1 = xl_now_us();
     CbCache *c = ovl_ctx();
     if (!c->raw) c->raw = cb_raw_bits(&c->r, &c->hk, comb_page, NULL, view_size());  // a cart with no overlays
+    uint32_t clo = R->nfunc ? R->func[0].start : R->lo, chi = clo;  // the code's span, not the data the game invalidated
+    for (uint32_t i = 0; i < R->nfunc; i++)
+        if (R->func[i].end > chi) chi = R->func[i].end;
     View v;
-    view_build(&v, R, R->lo, R->hi);
+    view_build(&v, R, clo, chi);
     HmResult *h = hm_run_seg(&v.r, (int)v.rseg, comb_page, NULL, v.size);
     CbHooks hk;
     hooks_from_hm(h, &hk);
@@ -376,6 +381,7 @@ static void scan(Rgn *R) {
     for (uint32_t i = 0; i < hk.n; i++)
         if (hk.addr[i] - R->lo < R->hi - R->lo) R->hk.addr[R->hk.n] = hk.addr[i], R->hk.pol[R->hk.n++] = hk.pol[i];
     cs_release(hk.addr), cs_release(hk.pol);
+    t2 = xl_now_us();
     uint32_t len;
     uint8_t *meta = meta_write_seg(&v.r, &R->hk, v.raw, (int)v.rseg, comb_page, NULL, v.size, &len);
     uint8_t *part = cs_alloc(v.r.nfunc + 1);
@@ -390,6 +396,8 @@ static void scan(Rgn *R) {
     comb_free();
     cut(R);
     st.scans++;
+    cs_log("rgn: ms scan %lu sigs %lu raw %lu\n", (unsigned long)((t1 - t0) / 1000), (unsigned long)((t2 - t1) / 1000),
+           (unsigned long)((xl_now_us() - t2) / 1000));
 }
 
 static void revive(Rgn *R) {
@@ -649,11 +657,43 @@ static void fn_translate(uint32_t vram) {
            (unsigned long)(uintptr_t)base);
 }
 
+static int zero_span(uint32_t a, uint32_t n) {
+    const uint32_t *p = rd_ptr(a);
+    for (uint32_t i = 0; i < n / 4; i++)
+        if (p[i]) return 0;
+    return 1;
+}
+
+// Fixed code's jal into RDRAM no segment holds (THPS2's loader calls what it unpacked, with no osInvalICache): a region
+// over the nonzero RAM around it, between fixed code and all-zero RGN_MIN blocks
+static void note_unplaced(uint32_t v) {
+    const CsResult *r = &ovl_ctx()->r;
+    uint32_t i = 0;
+    while (i < r->nunplaced && (RDRAM_LO | (r->unplaced[i] & 0x1FFFFFFFu)) != v) i++;
+    if (i == r->nunplaced || find(v, R_PENDING) || find(v, R_LIVE)) return;
+    uint32_t floor = RDRAM_LO, ceil = RDRAM_HI;
+    for (uint32_t k = 0; k < r->nseg; k++) {
+        const CsSeg *s = &r->seg[k];
+        if (CS_OV_IS_KEY(s->vram) || !seg_has_func(r, s)) continue;
+        uint32_t a = RDRAM_LO | (s->vram & 0x1FFFFFFFu), e = a + s->size;
+        if (e <= v && e > floor) floor = e;
+        if (a > v && a < ceil) ceil = a;
+    }
+    uint32_t lo = v & ~(RGN_MIN - 1), hi = lo + RGN_MIN;
+    while (lo > floor && lo - RGN_MIN >= floor && !zero_span(lo - RGN_MIN, RGN_MIN)) lo -= RGN_MIN;
+    if (lo > floor && lo - floor < RGN_MIN && !zero_span(floor, lo - floor)) lo = floor;
+    if (lo < floor) lo = floor;
+    while (hi < ceil && !zero_span(hi, ceil - hi < RGN_MIN ? ceil - hi : RGN_MIN)) hi += RGN_MIN;
+    if (hi > ceil) hi = ceil;
+    rgn_note(lo, hi - lo);
+}
+
 // t_lookup's miss: a region's chunk, else the one function at vram, translated
 static uint32_t ram_code(uint32_t vram, uint32_t key) {
     uint32_t fn = t_lookup_exact(key);
     if (fn) return fn;
     if ((vram >> 30) != 2 || (vram & 0x1FFFFFFFu) >= RDRAM_HI - RDRAM_LO) return 0;  // KSEG0 or KSEG1 RDRAM only
+    if (key == vram) note_unplaced(RDRAM_LO | (vram & 0x1FFFFFFFu));
     if (key == vram && (fn = rgn_code(vram))) return fn;
     fn_key = key;
     os_big_call(fn_translate, vram);

@@ -29,7 +29,7 @@ static const struct gfx_ucode ucodes[] = {
     { F3DEX_095("F3DEX         0.95"), .cull_mask = 0x7070, .kind = UC_F3DEX },
     { F3DEX_095("F3DLX         0.95"), .cull_mask = 0x7070, .kind = UC_F3DLX },
     // Rayman 2: 0.95's DMEM layout but MOVEWORD PERSPNORM at 0x110, no near plane in CULLDL; its handlers differ (below)
-    { F3DEX_095("F3DEX.NoN     1.23"), .cull_mask = 0x7030, .kind = UC_F3DEX, .f3dex12 = 1 },
+    { F3DEX_095("F3DEX.NoN     1.23"), .cull_mask = 0x7030, .kind = UC_F3DEX, .f3dex12 = 1, .no_near = 1 },
     // Elmo's Number Journey: NoN 1.23's dispatch and DMEM, with the near plane (0x7070 where NoN has 0x7030)
     { F3DEX_095("F3DEX         1.23"), .cull_mask = 0x7070, .kind = UC_F3DEX, .f3dex12 = 1 },
     // Kirby 64 (rsp_gbi2.c): the ID string follows an extra 0x0A at 0x138; DL depth is the 0x48-byte stack's
@@ -39,6 +39,9 @@ static const struct gfx_ucode ucodes[] = {
     // Pokemon Stadium 2, Paper Mario: Mr-Wiseguy/f3dex2's F3DEX2_2.08PL, no 0x0A before the ID, none of 2.04's bugs
     { .version = "RSP Gfx ucode F3DEX       fifo 2.08  Yoshitaka Yasumoto/Kawasedo 1999.", .version_off = 0x138,
       F3DEX2_LAYOUT, .texgen_fixed = 1, .point_lights = 1 },
+    // THPS2: F3DEX2_NoN_2.08, 2.08PL less point lighting; its near clip plane is w > 0, and CULLDL still tests it
+    { .version = "RSP Gfx ucode F3DEX.NoN   fifo 2.08  Yoshitaka Yasumoto 1999 Nintendo.", .version_off = 0x138,
+      F3DEX2_LAYOUT, .texgen_fixed = 1, .no_near = 1 },
     // Kirby 64's 2D ucode, reached by G_LOAD_UCODE; F3DEX2's DMEM layout below 0x180 (rsp_s2dex.c)
     { .version = "RSP Gfx ucode S2DEX       fifo 2.04  Yoshitaka Yasumoto 1998 Nintendo.", .version_off = 0x139,
       .viewport = X2_VIEWPORT, .fog = X2_FOG, .mp = X2_MVP, .dl_depth = 18, .texture = X2_TEXTURE_W0,
@@ -68,7 +71,7 @@ const struct gfx_ucode *gfx_ucode_find(uint32_t data) {
     for (unsigned k = 0; k < sizeof ucodes / sizeof ucodes[0]; k++)
         if (version_is(data, &ucodes[k])) return &ucodes[k];
     os_die("rsp gfx: microcode is not Fast3D 2.0D (string at ucode_data+0x270), F3DEX/F3DLX 0.95, F3DEX(.NoN) 1.23 "
-           "(+0x2B0), F3DEX2 2.04/2.04H or S2DEX2 2.04 (+0x139), F3DEX2 2.08PL (+0x138)", data);
+           "(+0x2B0), F3DEX2 2.04/2.04H or S2DEX2 2.04 (+0x139), F3DEX2 2.08PL or NoN 2.08 (+0x138)", data);
 }
 
 static void load_ucode_data(const uint8_t *dmem) {
