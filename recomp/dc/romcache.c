@@ -1,4 +1,6 @@
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "romcache.h"
 
@@ -22,6 +24,34 @@ void romcache_init(romcache_fetch_fn f) { fetch = f; }
 void romcache_add(void *p, uint32_t bytes) {
     uintptr_t a = ((uintptr_t)p + 31) & ~(uintptr_t)31, end = (uintptr_t)p + bytes;
     for (; a + BLOCK <= end && nslots < MAX_SLOTS; a += BLOCK) mem[nslots++] = (uint8_t *)a;
+}
+
+#define MAX_GIFTS 128u
+static struct { void *p; uint32_t bytes; uint16_t s0, n; } gifts[MAX_GIFTS];  // malloc'd donations, oldest first
+static uint32_t ngifts;
+
+void romcache_add_heap(void *p, uint32_t bytes) {
+    uint32_t s0 = nslots;
+    romcache_add(p, bytes);
+    if (ngifts < MAX_GIFTS) gifts[ngifts++] = (typeof(gifts[0])){ p, bytes, (uint16_t)s0, (uint16_t)(nslots - s0) };
+}
+
+uint32_t romcache_release(void) {
+    if (!ngifts) return 0;
+    uint32_t g = --ngifts, s0 = gifts[g].s0, n = gifts[g].n;
+    for (uint32_t s = s0; s < s0 + n; s++)
+        if (owner[s]) where[owner[s] - 1] = 0;
+    for (uint32_t s = s0 + n; s < nslots; s++) {  // later donations (the reader's spare buffers) move down
+        mem[s - n] = mem[s], owner[s - n] = owner[s], ref[s - n] = ref[s];
+        if (owner[s - n]) where[owner[s - n] - 1] = (uint16_t)(s - n + 1);
+    }
+    for (uint32_t s = nslots - n; s < nslots; s++) owner[s] = 0, ref[s] = 0;
+    nslots -= n;
+    if (hand >= nslots) hand = 0;
+    free(gifts[g].p);
+    printf("romcache: %lu KB back to the heap, %lu KB left\n", (unsigned long)(gifts[g].bytes >> 10),
+           (unsigned long)(romcache_bytes() >> 10));
+    return gifts[g].bytes;
 }
 
 uint32_t romcache_bytes(void) { return nslots * BLOCK; }

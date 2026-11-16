@@ -46,6 +46,8 @@ uint32_t cartboot_heap_used(void);
 // KOS glue: cs_alloc and xl_alloc overflow into [base, base + len) until close, which aborts if anything is left there
 void cartboot_spill_open(void *base, size_t len);
 void cartboot_spill_close(void);
+// KOS glue: a failed allocation calls this and tries again while it returns nonzero (the ROM cache's RAM back)
+extern uint32_t (*cartboot_reclaim)(void);
 
 // rdram: BOOT_RDRAM bytes of host-order words (each the big-endian word at that RDRAM offset). sync writes back the
 // D-cache and invalidates the I-cache over freshly written code.

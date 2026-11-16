@@ -1,5 +1,6 @@
 // Audio command lists read as voices: only the commands that feed each voice's final resampler run; the AICA
-// resamples, mixes and pans. ABI1 (SM64), nead (MK64) and naudio (Kirby 64), on mupen64plus-rsp-hle's primitives.
+// resamples, mixes and pans. ABI1 (SM64), nead (MK64, Zelda MM's) and naudio (Kirby 64), on mupen64plus-rsp-hle's
+// primitives.
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -263,9 +264,46 @@ static void exec_abi1(struct hle_t *h, uint32_t w1, uint32_t w2) {
     }
 }
 
-static void exec_nead(struct hle_t *h, uint32_t w1, uint32_t w2) {
+// mupen's alist_process_nead_mm where its table differs from MK64's; 0 for the commands the two share
+static int exec_nead_mm(struct hle_t *h, uint32_t w1, uint32_t w2) {
+    struct alist_nead_t *s = &h->alist_nead;
+    uint32_t addr = w2 & 0xFFFFFF, k = (w1 >> 12) & 0xFF0;
+    switch ((w1 >> 24) & 0x7F) {
+    case 0x04: alist_add(h, (uint16_t)w2, (uint16_t)(w2 >> 16), (uint16_t)k); return 1;
+    case 0x06: alist_resample_zoh(h, s->out, s->in, s->count, (w1 & 0xFFFF) << 1, w2 & 0xFFFF); return 1;
+    case 0x07:
+        if (((w1 >> 16) & 0xFF) > 1) {
+            s->filter_count = (uint16_t)w1;
+            s->filter_lut_address[0] = addr;
+            return 1;
+        }
+        if (s->filter_lut_address[0] + 16 > RDRAM_BYTES) os_die("rsp audio: FILTER run with no setup", w1);
+        s->filter_lut_address[1] = addr + 0x10;
+        alist_filter(h, (uint16_t)w1, s->filter_count, addr, s->filter_lut_address);
+        return 1;
+    case 0x09: alist_repeat64(h, (uint16_t)(w2 >> 16), (uint16_t)w1, (uint8_t)(w1 >> 16)); return 1;
+    case 0x0D: alist_interleave(h, (uint16_t)w1, (uint16_t)(w2 >> 16), (uint16_t)w2, (uint16_t)k); return 1;
+    case 0x0E: alist_multQ44(h, (uint16_t)(w2 >> 16), (uint16_t)(w1 & 0xFFF), (int8_t)(w1 >> 16)); return 1;
+    case 0x12:
+        s->env_values[2] = (w1 >> 8) & 0xFF00; s->env_steps[2] = (uint16_t)w1;
+        s->env_steps[0] = (uint16_t)(w2 >> 16); s->env_steps[1] = (uint16_t)w2;
+        return 1;
+    case 0x13: {
+        int16_t xors[4] = { (int16_t)(0 - (int16_t)((w1 & 2) >> 1)), (int16_t)(0 - (int16_t)(w1 & 1)),
+                            (int16_t)(0 - (int16_t)((w1 & 8) >> 1)), (int16_t)(0 - (int16_t)((w1 & 4) >> 1)) };
+        alist_envmix_nead(h, (w1 >> 4) & 1, (uint16_t)((w2 >> 20) & 0xFF0), (uint16_t)((w2 >> 12) & 0xFF0),
+                          (uint16_t)((w2 >> 4) & 0xFF0), (uint16_t)((w2 << 4) & 0xFF0), (uint16_t)k, (w1 >> 8) & 0xFF,
+                          s->env_values, s->env_steps, xors);
+        return 1;
+    }
+    }
+    return 0;
+}
+
+static void exec_nead(struct hle_t *h, uint32_t w1, uint32_t w2, int mm) {
     struct alist_nead_t *s = &h->alist_nead;
     uint32_t flags = (w1 >> 16) & 0xFF, addr = w2 & 0xFFFFFF;
+    if (mm && exec_nead_mm(h, w1, w2)) return;
     switch ((w1 >> 24) & 0x7F) {
     case 0x01:
         alist_adpcm(h, flags & 1, flags & 2, flags & 4, s->out, s->in, (uint16_t)((s->count + 0x1F) & ~0x1F), s->table, s->loop, addr);
@@ -346,14 +384,14 @@ static void exec_naudio(struct hle_t *h, uint32_t w1, uint32_t w2) {
 }
 
 static void exec(struct hle_t *h, int abi, uint32_t w1, uint32_t w2) {
-    if (abi == AA_NEAD) exec_nead(h, w1, w2);
+    if (AA_IS_NEAD(abi)) exec_nead(h, w1, w2, abi == AA_NEAD_MM);
     else if (abi == AA_NAUDIO) exec_naudio(h, w1, w2);
     else exec_abi1(h, w1, w2);
 }
 
 // A resampler's state address, which is its voice id
 static uint32_t res_addr(struct hle_t *h, int abi, uint32_t w1, uint32_t w2) {
-    if (abi == AA_NEAD) return w2 & 0xFFFFFF;
+    if (AA_IS_NEAD(abi)) return w2 & 0xFFFFFF;
     if (abi == AA_NAUDIO) return w1 & 0xFFFFFF;
     return alist_get_address(h, w2, h->alist_audio.segments, N_SEGMENTS);
 }
@@ -362,7 +400,7 @@ static uint32_t res_addr(struct hle_t *h, int abi, uint32_t w1, uint32_t w2) {
 static void voice_args(int abi, const uint32_t *seg, uint32_t w1, uint32_t w2, uint32_t *id, uint32_t *init, uint32_t *pitch) {
     *init = (w1 >> 16) & A_INIT;
     *pitch = (w1 & 0xFFFF) << 1;
-    if (abi == AA_NEAD) *id = w2 & 0xFFFFFF;
+    if (AA_IS_NEAD(abi)) *id = w2 & 0xFFFFFF;
     else if (abi == AA_NAUDIO) *id = w1 & 0xFFFFFF, *init = (w2 >> 30) & A_INIT, *pitch = ((w2 >> 14) & 0xFFFF) << 1;
     else *id = (((w2 >> 24) & 0x3F) < N_SEGMENTS ? seg[(w2 >> 24) & 0x3F] : 0) + (w2 & 0xFFFFFF);
 }
@@ -583,7 +621,7 @@ __attribute__((noinline)) static void plan_voices(struct hle_t *h, int abi, uint
 
 void alist_aica_run(struct hle_t *h, int abi, uint32_t hz) {
     uint32_t list = *dmem_u32(h, TASK_DATA_PTR) & 0xFFFFFF, n = *dmem_u32(h, TASK_DATA_SIZE) / 8, unattributed = 0;
-    int nead = abi == AA_NEAD, naudio = abi == AA_NAUDIO;
+    int nead = AA_IS_NEAD(abi), naudio = abi == AA_NAUDIO;
     if (abi == AA_ABI1) memset(h->alist_audio.segments, 0, sizeof h->alist_audio.segments);
     find_voices(n);
     av_list_begin(hz);

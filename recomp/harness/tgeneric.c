@@ -331,7 +331,7 @@ uint32_t t_lookup(uint32_t vram) {
 }
 
 void t_untranslated(uint32_t vram) {
-    die("t_untranslated", vram, 0);
+    os_die("t_untranslated", vram);  // with the threads' guest call chains, to show who jumped there
 }
 
 void t_external(struct tctx *c, uint32_t vram) {

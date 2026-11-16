@@ -571,7 +571,7 @@ struct FT {
     uint32_t n;
     Cache g, f;
     uint32_t ntabs, *tabs, *tab_label;
-    uint8_t *leader, *loophead;
+    uint8_t *leader, *loophead, *reach;  // reach: some path from the entry or a jump table gets there
     int mmio;
     int raw, keep;
     uint32_t generic;
@@ -1374,7 +1374,26 @@ static void ctl_jump(FT *t, const Insn *ins, const Insn *slot, int callee_raw) {
     after_call(t, !callee_raw);
 }
 
-// jr: a return, or a jump through the function's jump table
+// jr through a register the scan found no table for: a tail jump to its target, looked up at run time
+static void jr_lookup(FT *t, int rs, const Insn *slot) {
+    Cache *g = &t->g;
+    int tr = c_read(g, rs);
+    I1(MOVL_PUSH(tr, 15));
+    g->pinned = 0;
+    if (slot)
+        emit_slot(t, slot);
+    c_post_op(g);
+    g->pinned = 0;
+    store_all(t);
+    I1(MOVL_POP(15, 4));
+    em_lit(1, V_NAME, N_LOOKUP);
+    I2(JSR(1), NOP);
+    I1(LDSL_PR_POP(15));
+    I2(JMP(0), NOP);
+    em_barrier();
+}
+
+// jr: a return, a jump through the function's jump table, or else a tail jump looked up at run time
 static void ctl_jr(FT *t, const Insn *ins, const Insn *slot) {
     Cache *g = &t->g;
     int rs = (ins->raw >> 21) & 31;
@@ -1388,8 +1407,10 @@ static void ctl_jr(FT *t, const Insn *ins, const Insn *slot) {
         return;
     }
     int ti = ft_table(t, ins->vram);
-    if (ti < 0)
-        fail("%08x: jr $%d without a jump table", (unsigned)ins->vram, rs);
+    if (ti < 0) {
+        jr_lookup(t, rs, slot);
+        return;
+    }
     if (slot && slot->raw != 0)
         fail("%08x: jump-table jr with a non-empty slot", (unsigned)ins->vram);
     drop(t);
@@ -1749,6 +1770,41 @@ static Insn *g_ins;
 static uint32_t g_ins_cap;
 static uint8_t *g_marks;
 static uint32_t g_marks_cap;
+
+static int reach_mark(FT *t, uint32_t v, uint32_t from) {
+    if (v < t->lo || v >= t->hi || (v - t->lo) & 3 || t->reach[(v - t->lo) / 4]) return 0;
+    t->reach[(v - t->lo) / 4] = 1;
+    return v <= from;  // behind the sweep: another pass picks up what it reaches
+}
+
+// Words no path from the entry or a jump table reaches are data inside the scan's hull (a FRAGMENT header after its
+// entry's j): they become traps, so nothing needs a template for them. Over-marking is safe, so links fall through
+static void find_reach(FT *t) {
+    int again = 1;
+    t->reach[0] = 1;
+    for (uint32_t k = 0; k < t->ntabs; k++) {
+        const JTab *jt = &M.tab[t->tabs[k]];
+        for (uint32_t i = 0; i < jt->n; i++) reach_mark(t, rd32(jt->targets + 4 * i), t->hi);
+    }
+    while (again) {
+        again = 0;
+        for (uint32_t i = 0; i < t->n; i++) {
+            const Insn *ins = &t->ins[i];
+            uint32_t v = ins->vram, hi16 = ins->raw >> 16;
+            if (!t->reach[i]) continue;
+            if (isBranch(ins) || isJump(ins)) {
+                again |= reach_mark(t, v + 4, v);
+                if (isBranch(ins)) again |= reach_mark(t, branch_vram(ins), v);
+                if (ins->op == OP_j) again |= reach_mark(t, jump_key(t->func, ins), v);
+                int stops = ins->op == OP_j || ins->op == OP_jr || hi16 == 0x1000 || hi16 == 0x0401;
+                if (!stops) again |= reach_mark(t, v + 8, v);
+                if (i + 1 < t->n && !t->leader[i + 1]) i++;  // the slot runs only as the slot: it doesn't fall through
+            } else if (ins->raw != 0x42000018u) {  // eret
+                again |= reach_mark(t, v + 4, v);
+            }
+        }
+    }
+}
 static uint32_t g_tabs[512], g_tab_label[512];
 
 static void decode(uint32_t lo, uint32_t hi) {
@@ -1785,9 +1841,9 @@ static void ft_init(FT *t, uint32_t func, uint32_t hi, int level) {
             t->tabs[t->ntabs] = i;
             t->tab_label[t->ntabs++] = new_label();
         }
-    g_marks = grow(g_marks, &g_marks_cap, 2 * (t->nwords + 1), 1);
-    t->leader = g_marks, t->loophead = g_marks + t->nwords + 1;
-    memset(g_marks, 0, 2 * (t->nwords + 1));
+    g_marks = grow(g_marks, &g_marks_cap, 3 * (t->nwords + 1), 1);
+    t->leader = g_marks, t->loophead = g_marks + t->nwords + 1, t->reach = g_marks + 2 * (t->nwords + 1);
+    memset(g_marks, 0, 3 * (t->nwords + 1));
 #define MARK(arr, v) do { if (t->lo <= (v) && (v) < t->hi) (arr)[((v) - t->lo) / 4] = 1; } while (0)
     MARK(t->leader, t->lo);
     for (uint32_t i = 0; i < t->n; i++) {
@@ -1817,6 +1873,7 @@ static void ft_init(FT *t, uint32_t func, uint32_t hi, int level) {
             MARK(t->loophead, tg);
     }
 #undef MARK
+    find_reach(t);
     kseg1_access(t);
     if (level >= 2)
         allocate(t);
@@ -1849,6 +1906,13 @@ static void translate(FT *t) {
             em_label(lab(t, ins->vram));
             if (is_loophead(t, ins->vram))
                 backedge_poll(t);
+        }
+        if (!t->reach[idx]) {  // data: what follows it is reached only through a label
+            em_lit(4, V_CONST, ov_real(ins->vram));
+            em_lit(1, V_NAME, N_UNTRANSLATED);
+            I2(JSR(1), NOP);
+            idx++;
+            continue;
         }
         if (isBranch(ins) || isJump(ins)) {
             const Insn *slot = idx + 1 < n ? &t->ins[idx + 1] : NULL;

@@ -16,6 +16,7 @@
 #include "gfx_tex.h"
 #include "gfx_pvr.h"
 #include "romcache.h"
+#include "cartboot.h"
 #include "vmupak.h"
 #include "cartflash.h"
 #include "flashram.h"
@@ -28,6 +29,7 @@
 
 #define OWN_STACK 0x10000u
 #define HEAP_SPARE 0x80000u   // left to KOS after the ROM cache takes the rest of the heap
+#define ROMCACHE_GIFT 0x40000u  // the ROM cache's heap comes in these, each one it can give back
 #define DCACHE_SPAN 0x4000u   // the SH-4's operand cache: direct-mapped, 16 KB, sets from address bits 13:5
 #define RSP_HOT 0x800u        // the RSP fiber's stack depth in use; Kirby 64 peaks at 1656 bytes
 #define TRIG_HELD 0x40        // an analog trigger counts as pressed past a quarter
@@ -205,6 +207,7 @@ static void load_cart_save(void) {
 
 // The pak's last writes reach the VMU before an exit or a restart into the menu
 static void exit_combo(void) {
+    boot_hang_report();  // a freeze the combo ends says where it was
     vmupak_flush();
     cartflash_flush();
     if (combo_next) combo_next();
@@ -242,10 +245,16 @@ uint32_t play_heap_to_romcache(uint32_t keep) {
         heap = n - spare;
         break;
     }
-    void *p = heap ? malloc(heap) : 0;
-    if (!p) return 0;
-    romcache_add(p, heap);
-    return heap;
+    uint32_t given = 0;
+    while (heap - given >= 2 * 4096u) {  // in pieces the cache gives back when run-time code needs the heap
+        uint32_t n = heap - given < ROMCACHE_GIFT ? heap - given : ROMCACHE_GIFT;
+        void *p = malloc(n);
+        if (!p) break;
+        romcache_add_heap(p, n);
+        given += n;
+    }
+    cartboot_reclaim = romcache_release;
+    return given;
 }
 
 static void *run(void *arg) {

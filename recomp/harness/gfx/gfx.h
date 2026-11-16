@@ -27,6 +27,8 @@ struct gfx_ucode {
     uint8_t f3dex12;   // F3DEX 1.2x: BRANCH_Z and LOAD_UCODE are real; texrects take RDPHALF_1 + RDPHALF_2
     uint8_t flat_rgb;  // flat shading takes only RGB from the first vertex; alpha stays per vertex
     uint8_t special1_mvp;  // F3DEX2 2.04H: G_SPECIAL_1 recomputes MP; other F3DEX2s treat it as a no-op
+    uint8_t texgen_fixed;  // F3DEX2 2.08: G_TEXTURE_GEN_LINEAR keeps S and T (2.04's BUG_TEXGEN_LINEAR_CLOBBER_S_T)
+    uint8_t point_lights;  // F3DEX2 2.08PL: G_LIGHTING_POSITIONAL lights one light at a time, point lights among them
 };
 extern const struct gfx_ucode *gfx_uc;
 

@@ -109,6 +109,7 @@ struct Scan {
     uint32_t nmemo, capmemo;
     Vec *deps;       // the explore in progress records its blocks here
     uint8_t dep_words, dep_unbounded, dropped, ptr_ranged;
+    uint8_t region;  // cs_run_region: run-time code, which no ROM scan sees
     i64 ptr_lo, ptr_hi;
     CsResult res;
 };
@@ -1955,6 +1956,7 @@ const CsResult *cs_run_region(Scan *S, uint32_t vram, const uint32_t *seeds, uin
     while (S->npend) pend_done(S, 0);
     rom_starts_done(S);
     S->entry = nseeds ? seeds[0] : vram;
+    S->region = 1;
     add_seg(S, vram, 0, S->size, CS_HOW_ICACHE);
     RabbitizerConfig_Cfg.pseudos.enablePseudos = false;
     Vec queue = {0}, nw = {0};
@@ -1977,17 +1979,21 @@ const CsResult *cs_run_region(Scan *S, uint32_t vram, const uint32_t *seeds, uin
 }
 
 static void finish(Scan *S) {
+    Map swept = {0};  // a region's sweep starts: one swept in again is a label refine keeps absorbing (a fragment's
+                      // entry after its header's j, over stale code), so the sweep stops there
     for (;;) {  // code only the sweep reached still calls functions nothing else reaches
         Vec added = {0}, calls = {0};
+        int again = 0;
         sweep(S, &added);
         for (uint32_t k = 0; k < added.n; k++) {
             const Func *f = get_func(S, added.v[k]);
             for (uint32_t i = 0; f && i < f->calls.n; i++)
                 if (!map_has(&S->funcs, f->calls.v[i])) vpush(&calls, f->calls.v[i]);
+            if (S->region) again |= map_has(&swept, added.v[k]), map_add(&swept, added.v[k]);
         }
         vfree(&added);
         vsortu(&calls);
-        if (!calls.n) {
+        if (!calls.n || again) {
             vfree(&calls);
             break;
         }
@@ -1995,6 +2001,7 @@ static void finish(Scan *S) {
         vfree(&calls);
         update_hulls(S);
     }
+    map_free(&swept);
     merge_dups(S);
     refine(S);
     update_hulls(S);

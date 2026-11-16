@@ -245,12 +245,13 @@ static void light_vertex2(struct gvtx *v, const int8_t n[3], const struct light_
     v->a = (uint8_t)((((v->a << 7) * 0xFFFE + 0x8000) >> 16) >> 7);
 }
 
-// lights_texgenmain's G_TEXTURE_GEN_LINEAR with 2.04H's BUG_TEXGEN_LINEAR_CLOBBER_S_T: its x * 0x44D3 term reads 0x4000
+// lights_texgenmain's G_TEXTURE_GEN_LINEAR; under 2.04's BUG_TEXGEN_LINEAR_CLOBBER_S_T its x * 0x44D3 term reads 0x4000
 GFX_COLD static int32_t texgen_linear2(int16_t look) {
     int32_t x = look >> 1;
     int32_t x2 = sat_i16((2 * x * x + 0x8000) >> 16);
     int32_t c = sat_i16((int32_t)((2 * (int64_t)x * 0x7FFF + 0x8000 + 2 * (int64_t)x * 0x6CB3) >> 16));
-    int64_t acc = ((int64_t)0x4000 << 16) + 2 * (int64_t)0x4000 * 0x44D3 + 2 * (int64_t)x2 * c;
+    int64_t m = gfx_uc->texgen_fixed ? x : 0x4000;
+    int64_t acc = ((int64_t)0x4000 << 16) + 2 * m * 0x44D3 + 2 * (int64_t)x2 * c;
     return sat_i16((int32_t)(acc >> 16));
 }
 
@@ -316,6 +317,8 @@ GFX_HOT(01) void gfx_load_vtx(uint32_t phys, uint32_t n, uint32_t v0, uint32_t t
     bt->geom = g.geom;
     if (g.geom & G_LIGHTING) {
         if (gfx_uc->kind == UC_F3DEX2) {
+            if (gfx_uc->point_lights && (g.geom & G_LIGHTING_POSITIONAL))
+                os_die("rsp gfx: G_LIGHTING_POSITIONAL (F3DEX2 2.08PL point lighting) isn't modeled", g.geom);
             lights_prepare2(&bt->lc);
         } else {
             lights_prepare(&bt->lc);

@@ -47,8 +47,17 @@ static void *spill(size_t n) {
     return h + 2;
 }
 
-static void *any_alloc(size_t n) {
+uint32_t (*cartboot_reclaim)(void);
+
+// After the boot the ROM cache holds the heap: run-time code translation takes it back a donation at a time
+static void *heap_alloc(size_t n) {
     void *p = malloc(n);
+    while (!p && cartboot_reclaim && cartboot_reclaim()) p = malloc(n);
+    return p;
+}
+
+static void *any_alloc(size_t n) {
+    void *p = heap_alloc(n);
     return p ? p : spill(n);
 }
 
@@ -67,7 +76,7 @@ static void *any_realloc(void *p, size_t n) {
     } else {
         if ((q = realloc(p, n))) return q;
         old = malloc_usable_size(p);
-        q = spill(n);
+        q = any_alloc(n);
     }
     if (!q) return NULL;
     memcpy(q, p, old < n ? old : n);
@@ -97,8 +106,8 @@ void cs_log(const char *fmt, ...) {
 }
 
 void *xl_alloc(size_t n) {
-    void *p = calloc(1, n ? n : 1);
-    if (!p && (p = spill(n ? n : 1))) memset(p, 0, n);
+    void *p = any_alloc(n ? n : 1);
+    if (p) memset(p, 0, n);
     if (!p) fail("xlate", "out of memory");
     return p;
 }

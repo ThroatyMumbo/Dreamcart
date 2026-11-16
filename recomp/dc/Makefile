@@ -14,7 +14,7 @@ export KOS_LDFLAGS += -Wl,--wrap=maple_wait_scan
 # dc_exit.c turns the MMU off on every abort and exit, so no dcload restarts into a TLB miss after the program
 export KOS_LDFLAGS += -Wl,--wrap=arch_abort -Wl,--wrap=arch_exit
 MUPEN_HLE := $(ROOT)/mupen64plus-rsp-hle/src
-HLE_OBJS  := hle_alist.o hle_alist_audio.o hle_alist_nead.o hle_alist_naudio.o hle_mp3.o hle_audio.o hle_memory.o abi1_fast.o
+HLE_OBJS  := hle_alist.o hle_alist_audio.o hle_alist_nead.o hle_alist_naudio.o hle_mp3.o hle_audio.o hle_memory.o hle_jpeg.o abi1_fast.o
 # harness/abi1_fast.c replaces these three; mupen's copies stay as weak definitions
 HLE_WEAK  := --weaken-symbol=_alist_envmix_exp --weaken-symbol=_alist_resample --weaken-symbol=_alist_adpcm \
              --weaken-symbol=_alist_clear --weaken-symbol=_alist_envmix_nead
@@ -30,7 +30,7 @@ AB       := $(ROOT)/build/dc-any
 AB_INC  := -I$(ROOT)/harness -I$(GFXDIR) -I$(ROOT)/dc -I$(ROOT)/xlate -I$(ROOT)/cartscan -I$(RAB)/include
 AB_CF    := $(COMMON) $(AB_INC)
 AB_KCF   := $(KOS_CFLAGS) $(KOS_INC_PATHS) -I$(DCDIR) $(AB_INC) -w $(PREFIX_MAP)
-AB_HARN  := call tgeneric hooks os hostmmu rcp pi_ledger pif flashram cartboot tload ovl rgn
+AB_HARN  := call tgeneric hooks os hostmmu rcp rsp_task pi_ledger pif flashram cartboot tload ovl rgn
 AB_CS    := $(CS_SRCS)
 # Audio: the game's voices on AICA channels (harness/alist_aica.c)
 AB_AUD   := $(AB)/h/rsp_audio.o $(AB)/h/alist_decode.o $(AB)/h/audio_aica.o $(AB)/h/alist_aica.o $(AB)/h/aica_voice.o \

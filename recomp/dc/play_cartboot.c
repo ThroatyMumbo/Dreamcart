@@ -146,8 +146,8 @@ static uint32_t guest_fn(uint32_t pc) {
     return os_fn_below(cb_out.funcs, cb_out.func_off, 1, cb_out.nfuncs, off, NULL);
 }
 
-// A hang at the deadline: where the n64 thread sits in translated code, sampled, then the OS threads
-static void on_deadline(void) {
+// Where the n64 thread sits in translated code, sampled, then the OS threads
+void boot_hang_report(void) {
     for (int k = 0; k < 8 && n64_thd; k++) {
         uint32_t pc = n64_thd->context.pc, pr = n64_thd->context.pr;
         printf("stuck: pc %08lx in f_%08lX, pr %08lx in f_%08lX\n", (unsigned long)pc, (unsigned long)guest_fn(pc),
@@ -156,6 +156,8 @@ static void on_deadline(void) {
     }
     os_dump();
 }
+
+static void on_deadline(void) { boot_hang_report(); }
 
 static void on_fault(uint32_t pc, uint32_t pr) {
     printf("fault: pc in f_%08lX, pr in f_%08lX\n", (unsigned long)guest_fn(pc), (unsigned long)guest_fn(pr));

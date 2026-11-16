@@ -504,11 +504,31 @@ uint32_t os_call(uint32_t vram, const uint32_t a[8]) {
 // Loop back-edges in translated code count down t_budget; at zero, compute has taken virtual time and interrupts land
 uint32_t t_budget = OS_TICK_EDGES;
 
+#define RSP_STARVE_COUNTS 94000ull  // ~2 ms parked while threads above the floor keep the CPU (46.875 MHz Count)
+static unsigned long long rsp_parked_since;
+
+// The RSP runs beside the CPU: a parked graphics task gets a slice even while a busy thread outranks it (Pokemon
+// Stadium 2's loader polls for that very task's completion)
+static void rsp_share(void) {
+    if (!rcp_rsp_parked()) {
+        rsp_parked_since = 0;
+        return;
+    }
+    if (!rsp_parked_since) {
+        rsp_parked_since = vclock | 1;
+        return;
+    }
+    if (vclock - rsp_parked_since < RSP_STARVE_COUNTS) return;
+    rsp_parked_since = 0;
+    rcp_rsp_idle();
+}
+
 void t_tick(struct tctx *c) {
     (void)c;
     cur->tick = (uint32_t)(uintptr_t)__builtin_return_address(0);
     t_budget = OS_TICK_EDGES;
     catch_up();
+    rsp_share();
     os_poll();
 }
 

@@ -26,14 +26,16 @@ struct gfx_pv {
     uint32_t argb, oargb;
 };
 
-struct gfx_rect { int16_t x0, y0, x1, y1; };  // 10.2 screen units, as G_SETSCISSOR; empty when x0 >= x1 or y0 >= y1
+#define GFX_COVER_COLS 32
+#define GFX_COVER_ROWS 24
+struct gfx_cover { uint32_t row[GFX_COVER_ROWS]; };  // a 32x24 grid over the frame; bit c of row r: cell (c, r) drawn in
 
 struct gfx_sink {
     void (*frame_begin)(uint32_t cimg, int siz, int w, int h);  // siz as G_SETCIMG: 2 for 16-bit
     void (*poly)(const struct gfx_poly *p);
     void (*tri)(const struct gfx_pv *a, const struct gfx_pv *b, const struct gfx_pv *c);
     void (*tex_upload)(uint16_t id, int w, int h, int fmt, const uint16_t *texels);
-    void (*frame_end)(const struct gfx_rect *drawn);  // the scissors it drew under: the color image keeps the rest
+    void (*frame_end)(const struct gfx_cover *drawn);  // the cells it drew in: the color image keeps the rest
 };
 
 extern const struct gfx_sink *gfx_sink;  // dc/gfx_pvr.c's, set before the first task

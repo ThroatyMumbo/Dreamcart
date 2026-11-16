@@ -8,6 +8,7 @@
 #include "ovl.h"
 #include "pif.h"
 #include "flashram.h"
+#include "rsp_task.h"
 
 #define RDRAM_SIZE RDRAM_BYTES
 #define VI_NTSC_HZ 48681812ull
@@ -287,6 +288,7 @@ void rcp_boot_spmem(uint32_t fill, uint32_t imem0) {
 // RSP task timing model, not measured: a fixed start plus a cost per audio command
 #define RSP_SETUP_COUNTS 2000u
 #define RSP_COUNTS_PER_CMD 400u
+#define RSP_COUNTS_PER_MB 4000u  // a JPEG macroblock's IDCT and color conversion
 
 // Graphics task model, not measured: per display-list command, vertex and triangle; the RDP finishes after
 #define GFX_SETUP_COUNTS 4000u
@@ -389,7 +391,13 @@ static void sp_start(void) {
         return;
     }
     if (rcp_hooks.task_start) rcp_hooks.task_start(type);
-    if (type != 2) os_die("rcp: RSP task of unknown type", type);
+    if (type != 2) {
+        uint32_t n = rsp_other_task(spmem, type);
+        sp_status &= ~0x3u;
+        sp_running = 1;
+        sp_done_at = os_now() + RSP_SETUP_COUNTS + (unsigned long long)n * RSP_COUNTS_PER_MB;
+        return;
+    }
     uint32_t cmds = rsp_audio_task(spmem, rcp_ai_hz());
     sp_status &= ~0x3u;  // running: neither halted nor broken until the modeled end
     sp_running = 1;

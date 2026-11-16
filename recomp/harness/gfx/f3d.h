@@ -131,6 +131,7 @@
 #define G_LIGHTING 0x00020000
 #define G_TEXTURE_GEN 0x00040000
 #define G_TEXTURE_GEN_LINEAR 0x00080000
+#define G_LIGHTING_POSITIONAL 0x00400000  // F3DEX2 2.08PL's point lighting
 #define G_CLIPPING 0x00800000  // F3DLX only: clear means no trivial reject and no clipping
 
 // RDP commands the RSP forwards (0xC0-0xFF)

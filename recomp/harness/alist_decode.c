@@ -1,5 +1,5 @@
 // Audio command lists decoded once per task: the bounds every build needs before mupen's code runs, and the DMEM
-// ranges alist_aica.c's voice split works from. ABI1 (SM64), nead (MK64) and naudio (Kirby 64).
+// ranges alist_aica.c's voice split works from. ABI1 (SM64), nead (MK64, Zelda MM's) and naudio (Kirby 64).
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -217,16 +217,51 @@ __attribute__((noinline)) static void decode_abi1(struct hle_t *h, uint32_t list
     die_at.abi1 = 0;
 }
 
-// nead (MK64's ABI2): its RDRAM operands with the bytes each can touch; DMEM goes through alist.c's masked helpers
-__attribute__((noinline)) static void decode_nead(struct hle_t *h, uint32_t list, uint32_t n) {
-    uint32_t in = 0, out = 0, count = 0;
+#define FILTER_MAX 0x780u  // alist_filter's output buffer, in bytes
+
+// Zelda MM's nead where its command table differs from MK64's; 0 for the commands the two share
+static int nead_mm_cmd(struct cmd *c, uint32_t op, uint32_t w1, uint32_t w2, uint32_t in, uint32_t out, uint32_t count,
+                       uint32_t *filter_count) {
+    uint32_t a = w2 & 0xFFFFFF, k = (w1 >> 12) & 0xFF0;
+    switch (op) {
+    case 0x00: case 0x17: scan_die("rsp audio: nead_mm command mupen has no handler for", w1, 0); return 1;
+    case 0x04: rd(c, w2 >> 16, k); rd(c, w2 & 0xFFFF, k); wr(c, w2 & 0xFFFF, k); return 1;  // ADDMIXER
+    case 0x06: {  // RESAMPLE_ZOH
+        uint32_t last = ((count >> 1) * ((w1 & 0xFFFF) << 1) + (w2 & 0xFFFF)) >> 16;
+        if (count) { rd(c, in, 2 * (last + 1)); wr(c, out, count); }
+        return 1;
+    }
+    case 0x07:  // FILTER: a setup, or a run over its state at a and the two coefficient blocks
+        if (((w1 >> 16) & 0xFF) > 1) {
+            need_dram(a, 16, op);
+            c->flags = F_STATE;
+            *filter_count = w1 & 0xFFFF;
+            return 1;
+        }
+        if (*filter_count > FILTER_MAX) scan_die("rsp audio: FILTER longer than mupen's buffer", *filter_count, 0);
+        need_dram(a, 0x20, op);
+        rd(c, w1 & 0xFFFF, al(*filter_count, 16)); wr(c, w1 & 0xFFFF, *filter_count);
+        return 1;
+    case 0x09: rd(c, w1 & 0xFFFF, 128); wr(c, w2 >> 16, 128 * ((w1 >> 16) & 0xFF)); return 1;  // DUPLICATE
+    case 0x0D: rd(c, w2 >> 16, k); rd(c, w2 & 0xFFFF, k); wr(c, w1 & 0xFFFF, 2 * k); return 1;  // INTERLEAVE
+    case 0x0E: rd(c, w2 >> 16, w1 & 0xFFF); wr(c, w2 >> 16, w1 & 0xFFF); return 1;  // HILOGAIN
+    case 0x12: c->flags = F_STATE; return 1;  // ENVSETUP1, with a wet step
+    }
+    return 0;
+}
+
+// nead (MK64's and Zelda MM's ABI2): its RDRAM operands with the bytes each can touch; DMEM goes through alist.c's
+// masked helpers
+__attribute__((noinline)) static void decode_nead(struct hle_t *h, uint32_t list, uint32_t n, int mm) {
+    uint32_t in = 0, out = 0, count = 0, filter_count = 0;
     for (uint32_t i = 0; i < n; i++) {
         struct cmd *c = &cmds[i];
         uint32_t w1 = *dram_u32(h, list + 8 * i), w2 = *dram_u32(h, list + 8 * i + 4);
         uint32_t op = (w1 >> 24) & 0x7F, flags = (w1 >> 16) & 0xFF, a = w2 & 0xFFFFFF;
         die_at.at = i;
         open_cmd(c);
-        if (op >= 0x20) os_die("alist_aica: nead command out of range", w1);
+        if (op >= (mm ? 0x18u : 0x20u)) os_die("alist_aica: nead command out of range", w1);
+        if (mm && nead_mm_cmd(c, op, w1, w2, in, out, count, &filter_count)) continue;
         switch (op) {
         case 0x01:
             need_dram(a, 0x20, op);
@@ -357,7 +392,7 @@ uint32_t alist_decode(struct hle_t *h, int abi, uint32_t list, uint32_t size) {
     if (list >= RDRAM_BYTES || size > RDRAM_BYTES - list) os_die("rsp audio: command addresses RDRAM out of range", 0x80u << 24 | list);
     if (n > MAXC) os_die("alist_aica: command list longer than MAXC", n);
     die_at.h = h, die_at.list = list, die_at.size = size, die_at.at = 0;
-    if (abi == AA_NEAD) decode_nead(h, list, n);
+    if (AA_IS_NEAD(abi)) decode_nead(h, list, n, abi == AA_NEAD_MM);
     else if (abi == AA_NAUDIO) decode_naudio(h, list, n);
     else decode_abi1(h, list, n);
     return n;

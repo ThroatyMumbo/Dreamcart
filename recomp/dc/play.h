@@ -17,6 +17,7 @@ void boot_load(uint8_t *rdram);   // main thread: opens the cart link and fills 
 void boot_rom_cache(void);        // after romcache_init: the boot's spent memory and the heap go to the ROM cache
 void boot_rom_poll(void);         // the n64 thread, before each ROM read
 void boot_watch(kthread_t *n64);  // deadline and fault diagnostics
+void boot_hang_report(void);      // where the n64 thread sits, sampled, then the OS threads; the exit combo's too
 
 // play_stats.c, all in console time: a report line per second and a line per game frame
 extern uint32_t stats_second, stats_frame_no;

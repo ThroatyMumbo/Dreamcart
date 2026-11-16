@@ -16,6 +16,7 @@
 
 #define ABI1_KEY 0x1E24138Cu  // ucode_data + 0x28 for the common audio ABI (mupen's hle.c)
 #define NEAD_MK_KEY 0x11181350u  // ucode_data + 0x10: MarioKart, WaveRace (E) (mupen's hle.c)
+#define NEAD_MM_KEY 0x1F801250u  // ucode_data + 0x10: Zelda MM, Pokemon Stadium 2 (mupen's hle.c)
 #define NAUDIO_KEY 0x127Cu       // ucode_data + 0x10 when its first word isn't 1: naudio (mupen's hle.c)
 #define NAUDIO_BK_KEY 0x1280u    // Banjo-Kazooie's naudio, the same command table
 
@@ -49,13 +50,14 @@ uint32_t rsp_audio_task(uint8_t *dmem, uint32_t hz) {
     int abi = -1;
     if (rd(data) == 1 && rd(data + 0x30) == 0xF0000F00u && rd(data + 0x28) == ABI1_KEY) abi = AA_ABI1;
     else if (rd(data) == 1 && rd(data + 0x30) != 0xF0000F00u && rd(data + 0x10) == NEAD_MK_KEY) abi = AA_NEAD;
+    else if (rd(data) == 1 && rd(data + 0x30) != 0xF0000F00u && rd(data + 0x10) == NEAD_MM_KEY) abi = AA_NEAD_MM;
     else if (rd(data) != 1 && (rd(data + 0x10) == NAUDIO_KEY || rd(data + 0x10) == NAUDIO_BK_KEY)) abi = AA_NAUDIO;
     if (abi < 0) {
         sim_hex("rsp audio: ucode data", data);  // the words mupen's try_audio_task_detection keys on
         sim_hex(" +0", rd(data)), sim_hex(" +10", rd(data + 0x10));
         sim_hex(" +28", rd(data + 0x28)), sim_hex(" +30", rd(data + 0x30));
         sim_puts("\n");
-        os_die("rsp audio: microcode is not the common audio ABI, MK64's nead or naudio", rd(data + 0x10));
+        os_die("rsp audio: microcode is not the common audio ABI, a known nead or naudio", rd(data + 0x10));
     }
     hle.dram = (unsigned char *)(0x80000000u + t_rdram_bias);
     hle.dmem = dmem;

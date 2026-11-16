@@ -536,8 +536,9 @@ static const uint32_t *fn_page(void *ctx, uint32_t pg) {
     return fn_pg;
 }
 
-// The end of the function at v: every path followed to its jr, j, b or eret; 0 if one runs past RGN_MIN
-static uint32_t fn_extent(uint32_t v) {
+// The end of the function at v: every path followed to its jr, j, b or eret, j targets too unless tail_j; 0 if one
+// runs past RGN_MIN. *holes: words in the span no path reaches, so data (a fragment header after its entry's j)
+static uint32_t fn_walk(uint32_t v, int tail_j, int *holes) {
     static uint8_t seen[RGN_MIN / 4];
     uint32_t todo[64], nt = 0, end = v;
     memset(seen, 0, sizeof seen);
@@ -555,19 +556,29 @@ static uint32_t fn_extent(uint32_t v) {
             if (branch) {
                 uint32_t tg = a + 4 + ((uint32_t)(int32_t)(int16_t)w << 2);
                 if (tg - v < RGN_MIN && nt < 64) todo[nt++] = tg;
-            } else if (op == 2) {
+            } else if (op == 2 && !tail_j) {
                 uint32_t tg = (a & 0xF0000000u) | (w & 0x3FFFFFFu) << 2;
                 if (tg - v < RGN_MIN && nt < 64) todo[nt++] = tg;
             }
             if (stop) {
                 if (a + 8 > end) end = a + 8;
+                if (a + 4 - v < RGN_MIN) seen[(a + 4 - v) / 4] = 1;  // the delay slot
                 break;
             }
             if (w == ERET) break;
             a += 4;
         }
     }
+    *holes = 0;
+    for (uint32_t a = v; a < end && !*holes; a += 4) *holes = !seen[(a - v) / 4];
     return end;
+}
+
+// A j over data is a tail call: the function stops at its slot, and the target is its own function
+static uint32_t fn_extent(uint32_t v) {
+    int holes;
+    uint32_t end = fn_walk(v, 0, &holes);
+    return end && holes ? fn_walk(v, 1, &holes) : end;
 }
 
 static void fn_unlink(Fn *m) {

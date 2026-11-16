@@ -160,7 +160,7 @@ static int scene_open;
 static pvr_ptr_t cpu_tex;  // 512x256 RGB565, not twiddled: a framebuffer the CPU drew, or a kept frame
 static int cpu_w, cpu_h;   // the part of it that holds the image
 static int frame_w, frame_h, held;
-static struct gfx_rect prev_drawn, held_drawn;  // the last frame's drawn area, and the area the kept frame stands in for
+static struct gfx_cover prev_drawn, held_drawn;  // the last frame's drawn cells, and the cells the kept frame stands in for
 
 // cpu_tex over the whole screen, depth untouched
 static void cpu_quad(pvr_list_t which, int cmp, uint32_t out[5][8]) {
@@ -179,20 +179,28 @@ static void cpu_quad(pvr_list_t which, int cmp, uint32_t out[5][8]) {
     q[3] = (pvr_vertex_t){ PVR_CMD_VERTEX_EOL, 640.0f, 480.0f, z, u, v, 0xFFFFFFFFu, 0 };
 }
 
-static int rect_covers(const struct gfx_rect *a, const struct gfx_rect *b) {
-    return b->x0 >= b->x1 || b->y0 >= b->y1 || (a->x0 <= b->x0 && a->y0 <= b->y0 && a->x1 >= b->x1 && a->y1 >= b->y1);
+static int cover_has(const struct gfx_cover *a, const struct gfx_cover *b) {
+    for (int r = 0; r < GFX_COVER_ROWS; r++)
+        if (b->row[r] & ~a->row[r]) return 0;
+    return 1;
 }
 
-// The frame on screen at 320x240 into cpu_tex: what an N64 color image still holds where a frame doesn't draw.
-// About 14 ms of VRAM reads, once per frame that draws less than the one before
-static int keep_frame(void) {
+#define CELL_WORDS (160 / GFX_COVER_COLS)  // a cell's width in cpu_tex words at 320x240
+#define CELL_ROWS (240 / GFX_COVER_ROWS)
+
+// The frame on screen at 320x240 into cpu_tex, all of it or only some cells: what an N64 color image still holds
+// where a frame doesn't draw. About 14 ms of VRAM reads for all of it
+static int keep_frame(const struct gfx_cover *cells) {
     if (!cpu_tex && !(cpu_tex = pvr_mem_malloc(512 * 256 * 2))) return 0;
     pvr_wait_render_done();
     uint32_t front = (uint32_t)pvr_get_front_buffer();
     const volatile uint32_t *src = (const volatile uint32_t *)(PVR_RAM_BASE + ((front - PVR_RAM_BASE) >> 1));
     for (int y = 0; y < 240; y++, src += FB_W) {  // every other row and column
+        uint32_t m = cells ? cells->row[y / CELL_ROWS] : ~0u;
         volatile uint32_t *d = (volatile uint32_t *)cpu_tex + y * 256;
-        for (int x = 0; x < 160; x++) d[x] = (src[2 * x] & 0xFFFFu) | src[2 * x + 1] << 16;
+        for (int c = 0; m; c++, m >>= 1)
+            if (m & 1)
+                for (int x = c * CELL_WORDS; x < (c + 1) * CELL_WORDS; x++) d[x] = (src[2 * x] & 0xFFFFu) | src[2 * x + 1] << 16;
     }
     cpu_w = 320, cpu_h = 240;
     gfx_pvr_stats.kept_frames++;
@@ -207,7 +215,7 @@ int gfx_pvr_show_rdram(uint32_t phys, int w, int h) {
     gfx_pvr_stats.wait_us += timer_us_gettime64() - t0;
     rb_cimg = 0;
     readback_retarget();
-    held = 0, prev_drawn = (struct gfx_rect){ 0, 0, 0, 0 };
+    held = 0, prev_drawn = (struct gfx_cover){ { 0 } };
     cpu_w = w, cpu_h = h;
     const uint32_t *src = (const uint32_t *)(0x80000000u + phys + t_rdram_bias);
     for (int y = 0; y < h; y++) {
@@ -241,7 +249,7 @@ static void p_frame_begin(uint32_t cimg, int siz, int w, int h) {
     int fits = siz == 2 && w > 0 && h > 0 && w <= FB_W && h <= FB_H && !(FB_W % w) && !(FB_H % h) && !(w & 1)
                && cimg + (uint32_t)(w * h * 2) <= RDRAM_BYTES;
     rb_cimg = fits ? cimg : 0, rb_w = w, rb_h = h;
-    if (w != frame_w || h != frame_h) held = 0, prev_drawn = (struct gfx_rect){ 0, 0, 0, 0 };
+    if (w != frame_w || h != frame_h) held = 0, prev_drawn = (struct gfx_cover){ { 0 } };
     frame_w = w, frame_h = h;
     pvr_scene_begin();
     pvr_list_begin(PVR_LIST_OP_POLY);
@@ -348,31 +356,24 @@ static void flush(struct dlist *l, pvr_list_t which) {
 }
 
 // A frame that draws less than the one before leaves the rest of its color image as it was: keep the last frame
-// under the frames after it until one draws as much again
-static int hold_last_frame(const struct gfx_rect *drawn) {
-    int16_t w = (int16_t)(frame_w * 4), h = (int16_t)(frame_h * 4);
-    struct gfx_rect d = { drawn->x0 > 0 ? drawn->x0 : 0, drawn->y0 > 0 ? drawn->y0 : 0,
-                          drawn->x1 < w ? drawn->x1 : w, drawn->y1 < h ? drawn->y1 : h };
-    if (d.x0 >= d.x1 || d.y0 >= d.y1) d = (struct gfx_rect){ 0, 0, 0, 0 };
+// under the frames after it until one draws as much again. Once kept, only the cells just left undrawn change
+static int hold_last_frame(const struct gfx_cover *d) {
     int fresh = 0;
-    if (!rect_covers(&d, &prev_drawn) && keep_frame()) {
-        if (held) {
-            if (prev_drawn.x0 < held_drawn.x0) held_drawn.x0 = prev_drawn.x0;
-            if (prev_drawn.y0 < held_drawn.y0) held_drawn.y0 = prev_drawn.y0;
-            if (prev_drawn.x1 > held_drawn.x1) held_drawn.x1 = prev_drawn.x1;
-            if (prev_drawn.y1 > held_drawn.y1) held_drawn.y1 = prev_drawn.y1;
-        } else {
-            held_drawn = prev_drawn;
+    if (!cover_has(d, &prev_drawn)) {
+        struct gfx_cover gone;
+        for (int r = 0; r < GFX_COVER_ROWS; r++) gone.row[r] = prev_drawn.row[r] & ~d->row[r];
+        if (keep_frame(held ? &gone : 0)) {
+            for (int r = 0; r < GFX_COVER_ROWS; r++) held_drawn.row[r] = (held ? held_drawn.row[r] : 0) | prev_drawn.row[r];
+            held = fresh = 1;
         }
-        held = fresh = 1;
-    } else if (held && rect_covers(&d, &held_drawn)) {
+    } else if (held && cover_has(d, &held_drawn)) {
         held = 0;
     }
-    prev_drawn = d;
+    prev_drawn = *d;
     return fresh;
 }
 
-static void p_frame_end(const struct gfx_rect *drawn) {
+static void p_frame_end(const struct gfx_cover *drawn) {
     pvr_list_finish();
     int fresh = hold_last_frame(drawn);
     for (uint32_t i = 0; i < n_under; i++) tr.buf[under[i]][1] |= (uint32_t)PVR_DEPTHCMP_ALWAYS << 29;  // mode1 31:29

@@ -14,7 +14,8 @@ struct aa_stats {
 };
 extern struct aa_stats aa_stats;
 
-enum { AA_ABI1, AA_NEAD, AA_NAUDIO };  // the common audio ABI, MK64's nead, n_aspMain's naudio
+enum { AA_ABI1, AA_NEAD, AA_NAUDIO, AA_NEAD_MM };  // the common audio ABI, MK64's nead, n_aspMain's naudio, Zelda MM's nead
+#define AA_IS_NEAD(abi) ((abi) == AA_NEAD || (abi) == AA_NEAD_MM)
 
 // Runs the command list in DMEM's OSTask, as alist_decode left it in cmds[], on hle, in the given ABI, for an AI at hz:
 // only what feeds the voices runs, and the voices go to aica_voice.h

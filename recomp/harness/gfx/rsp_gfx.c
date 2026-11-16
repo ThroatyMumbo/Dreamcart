@@ -19,9 +19,10 @@ void (*rsp_gfx_poll)(void);
 #define F3D_FAMILY .texture = DMEM_STATE + 0x10, .clip_ratio = 0x76, .vp_sign = 0x50, .fog_min = 1
 #define F3DEX_095(name) .version = "RSP Gfx ucode " name " Yoshitaka Yasumoto Nintendo.", .version_off = 0x2B0, \
     .viewport = 0x380, .fog = 0x390, .mp = 0x460, .dl_depth = 18, .nvtx = 32, F3D_FAMILY
-#define F3DEX2_204(ver) .version = "RSP Gfx ucode F3DEX       fifo " ver " Yoshitaka Yasumoto 1998 Nintendo.", \
-    .version_off = 0x139, .viewport = X2_VIEWPORT, .fog = X2_FOG, .mp = X2_MVP, .dl_depth = 18, .cull_mask = 0x7070, \
+#define F3DEX2_LAYOUT .viewport = X2_VIEWPORT, .fog = X2_FOG, .mp = X2_MVP, .dl_depth = 18, .cull_mask = 0x7070, \
     .texture = X2_TEXTURE_W0, .clip_ratio = X2_CLIP_RATIO, .kind = UC_F3DEX2, .nvtx = 32, .flat_rgb = 1
+#define F3DEX2_204(ver) .version = "RSP Gfx ucode F3DEX       fifo " ver " Yoshitaka Yasumoto 1998 Nintendo.", \
+    .version_off = 0x139, F3DEX2_LAYOUT
 static const struct gfx_ucode ucodes[] = {
     { .version = "RSP SW Version: 2.0D, 04-01-96", .version_off = 0x270, .viewport = 0x320, .fog = 0x330, .mp = 0x3E0,
       .dl_depth = 10, .cull_mask = 0xFFFF, .kind = UC_F3D, .nvtx = 16, F3D_FAMILY },
@@ -35,6 +36,9 @@ static const struct gfx_ucode ucodes[] = {
     { F3DEX2_204("2.04H"), .special1_mvp = 1 },
     // Cruis'n World: Mr-Wiseguy/f3dex2's F3DEX2_2.04 byte for byte; only G_SPECIAL_1 differs from 2.04H
     { F3DEX2_204("2.04 ") },
+    // Pokemon Stadium 2, Paper Mario: Mr-Wiseguy/f3dex2's F3DEX2_2.08PL, no 0x0A before the ID, none of 2.04's bugs
+    { .version = "RSP Gfx ucode F3DEX       fifo 2.08  Yoshitaka Yasumoto/Kawasedo 1999.", .version_off = 0x138,
+      F3DEX2_LAYOUT, .texgen_fixed = 1, .point_lights = 1 },
     // Kirby 64's 2D ucode, reached by G_LOAD_UCODE; F3DEX2's DMEM layout below 0x180 (rsp_s2dex.c)
     { .version = "RSP Gfx ucode S2DEX       fifo 2.04  Yoshitaka Yasumoto 1998 Nintendo.", .version_off = 0x139,
       .viewport = X2_VIEWPORT, .fog = X2_FOG, .mp = X2_MVP, .dl_depth = 18, .texture = X2_TEXTURE_W0,
@@ -64,7 +68,7 @@ const struct gfx_ucode *gfx_ucode_find(uint32_t data) {
     for (unsigned k = 0; k < sizeof ucodes / sizeof ucodes[0]; k++)
         if (version_is(data, &ucodes[k])) return &ucodes[k];
     os_die("rsp gfx: microcode is not Fast3D 2.0D (string at ucode_data+0x270), F3DEX/F3DLX 0.95, F3DEX(.NoN) 1.23 "
-           "(+0x2B0), F3DEX2 2.04/2.04H or S2DEX2 2.04 (+0x139)", data);
+           "(+0x2B0), F3DEX2 2.04/2.04H or S2DEX2 2.04 (+0x139), F3DEX2 2.08PL (+0x138)", data);
 }
 
 static void load_ucode_data(const uint8_t *dmem) {

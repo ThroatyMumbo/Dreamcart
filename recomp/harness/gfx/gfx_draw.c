@@ -80,29 +80,49 @@ static struct tex_dec rect_dec = { 1, 1, 0, 0 };  // what the rect being resolve
 
 static float scis_x0, scis_y0, scis_x1, scis_y1;
 static int scis_on;  // some scissor edge lies inside the frame; the PVR's own frame clip covers the rest
-static struct gfx_rect scis_r, drawn;  // the current scissor, and the union of those the frame drew under
-static uint32_t scis_tris;             // gfx_drawn_tris when scis_r took effect
+static struct gfx_cover drawn;     // cells the frame's triangles touched, by their bounding boxes
+static int cover_full;             // every cell of the scissor is drawn: triangles stop marking
+static float cover_kx, cover_ky;   // cells per pixel
+static uint32_t scis_m;            // the scissor's cells: these columns of rows scis_r0..scis_r1
+static int scis_r0, scis_r1;
 
-static void drawn_add(void) {
-    if (gfx_drawn_tris != scis_tris) {
-        if (drawn.x0 >= drawn.x1 || drawn.y0 >= drawn.y1) drawn = scis_r;
-        if (scis_r.x0 < drawn.x0) drawn.x0 = scis_r.x0;
-        if (scis_r.y0 < drawn.y0) drawn.y0 = scis_r.y0;
-        if (scis_r.x1 > drawn.x1) drawn.x1 = scis_r.x1;
-        if (scis_r.y1 > drawn.y1) drawn.y1 = scis_r.y1;
-    }
-    scis_tris = gfx_drawn_tris;
+// The columns, and rows *r0..*r1, a box in pixels touches; the last cell is the one before an exact edge
+static uint32_t cover_box(float x0, float y0, float x1, float y1, int *r0, int *r1) {
+    float fc0 = x0 * cover_kx, fc1 = x1 * cover_kx - 1.0f / 64, fr0 = y0 * cover_ky, fr1 = y1 * cover_ky - 1.0f / 64;
+    if (fc1 < 0.0f || fr1 < 0.0f || fc0 >= GFX_COVER_COLS || fr0 >= GFX_COVER_ROWS) return 0;
+    int c0 = fc0 > 0.0f ? (int)fc0 : 0, c1 = fc1 < GFX_COVER_COLS - 1 ? (int)fc1 : GFX_COVER_COLS - 1;
+    *r0 = fr0 > 0.0f ? (int)fr0 : 0, *r1 = fr1 < GFX_COVER_ROWS - 1 ? (int)fr1 : GFX_COVER_ROWS - 1;
+    if (c1 < c0) c1 = c0;
+    if (*r1 < *r0) *r1 = *r0;
+    return ((2u << c1) - 1) & ~((1u << c0) - 1);
+}
+
+static int scissor_drawn(void) {
+    for (int r = scis_r0; r <= scis_r1; r++)
+        if (scis_m & ~drawn.row[r]) return 0;
+    return 1;
+}
+
+// Marks the cells a drawn triangle's bounding box touches
+GFX_COLD static void cover_tri(const struct gfx_pv *a, const struct gfx_pv *b, const struct gfx_pv *c) {
+    float x0 = a->x < b->x ? a->x : b->x, x1 = a->x < b->x ? b->x : a->x;
+    float y0 = a->y < b->y ? a->y : b->y, y1 = a->y < b->y ? b->y : a->y;
+    x0 = c->x < x0 ? c->x : x0, x1 = c->x > x1 ? c->x : x1, y0 = c->y < y0 ? c->y : y0, y1 = c->y > y1 ? c->y : y1;
+    int r0 = 0, r1 = -1;
+    uint32_t m = cover_box(x0, y0, x1, y1, &r0, &r1);
+    for (int r = r0; r <= r1; r++) drawn.row[r] |= m;
+    if ((m & scis_m) == scis_m) cover_full = scissor_drawn();
 }
 
 void gfx_scissor(void) {
-    drawn_add();
-    scis_r = (struct gfx_rect){ (int16_t)g.scis_ulx, (int16_t)g.scis_uly, (int16_t)g.scis_lrx, (int16_t)g.scis_lry };
     float w = (float)g.cimg_w, h = (float)(g.cimg_w * 3 / 4);
     float x0 = (float)g.scis_ulx * 0.25f, y0 = (float)g.scis_uly * 0.25f;
     float x1 = (float)g.scis_lrx * 0.25f, y1 = (float)g.scis_lry * 0.25f;
     scis_on = x0 > 0.0f || y0 > 0.0f || x1 < w || y1 < h;
     scis_x0 = x0 > 0.0f ? x0 : -1e30f, scis_y0 = y0 > 0.0f ? y0 : -1e30f;
     scis_x1 = x1 < w ? x1 : 1e30f, scis_y1 = y1 < h ? y1 : 1e30f;
+    scis_m = cover_box(x0, y0, x1, y1, &scis_r0, &scis_r1);
+    cover_full = !scis_m || scissor_drawn();
 }
 
 static uint16_t clip_slow = CLIP_ANY;  // clip codes that send a triangle through clip space
@@ -119,8 +139,10 @@ void gfx_guard_band(float ratio) {
 static void ensure_frame(void) {
     if (framed) return;
     framed = 1;
-    drawn = (struct gfx_rect){ 0, 0, 0, 0 };
-    scis_tris = gfx_drawn_tris;
+    int tiny = g.cimg_w < 4;  // no grid: counts as all drawn
+    __builtin_memset(&drawn, tiny ? 0xFF : 0, sizeof drawn);
+    cover_kx = tiny ? 0.0f : (float)GFX_COVER_COLS / (float)g.cimg_w;
+    cover_ky = tiny ? 0.0f : (float)GFX_COVER_ROWS / (float)(g.cimg_w * 3 / 4);
     gfx_scissor();
     gfx_sink->frame_begin(g.cimg, (int)g.cimg_siz, (int)g.cimg_w, (int)(g.cimg_w * 3 / 4));  // 4:3; the scissor can change mid-frame
 }
@@ -138,7 +160,6 @@ void gfx_frame_begin(void) {
 
 void gfx_frame_end(void) {
     if (!framed) return;
-    drawn_add();
     gfx_sink->frame_end(&drawn);
 }
 
@@ -328,6 +349,7 @@ GFX_COLD static void emit_scissored(const struct gfx_pv *a, const struct gfx_pv 
         emit_poly();
         gfx_sink->tri(&t[0], &t[1], &t[2]);
         gfx_drawn_tris++;
+        if (!cover_full) cover_tri(&t[0], &t[1], &t[2]);
     }
 }
 
@@ -345,6 +367,7 @@ GFX_HOT(07) __attribute__((noinline)) static void emit3(const struct gfx_pv *a, 
     if (poly_fresh) emit_poly();
     gfx_sink->tri(a, b, c);
     gfx_drawn_tris++;
+    if (__builtin_expect(!cover_full, 0)) cover_tri(a, b, c);
 }
 
 static void emit_pv(const struct gfx_pv *v) { emit3(&v[0], &v[1], &v[2]); }
