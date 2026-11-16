@@ -33,7 +33,9 @@ static const char *region_name(char c) {
     }
 }
 
-bool dc64_cart_save_ok(void) { return dc64_cart.save == 0 || dc64_cart.save == 512 || dc64_cart.save == 2048; }
+bool dc64_cart_save_ok(void) {
+    return dc64_cart.save == 0 || dc64_cart.save == 512 || dc64_cart.save == 2048 || dc64_cart.save == 131072;
+}
 
 int dc64_pak_free(void) { return g_pak_free; }
 

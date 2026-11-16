@@ -12,8 +12,9 @@ void cart_bringup(bool first);
 // Core0, once PSRAM is up: this cart's pass and flash cache slot, and its key for the SD cache.
 void cart_attach(void);
 
-// Core1, as maple_cart_t.ready: false while the cart is powered off for a swap.
+// Core1, as maple_cart_t.ready: false until main's first cart_attach, and while the cart is powered off for a swap.
 bool cart_ready(void);
+void cart_power_ready(void);  // core0 main, once that first attach is done
 
 // Console 'h': power the cart off, wait for Enter, power the new one up and reload everything served from it.
 void cart_swap(void);

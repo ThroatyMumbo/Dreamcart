@@ -30,7 +30,7 @@ AB       := $(ROOT)/build/dc-any
 AB_INC  := -I$(ROOT)/harness -I$(GFXDIR) -I$(ROOT)/dc -I$(ROOT)/xlate -I$(ROOT)/cartscan -I$(RAB)/include
 AB_CF    := $(COMMON) $(AB_INC)
 AB_KCF   := $(KOS_CFLAGS) $(KOS_INC_PATHS) -I$(DCDIR) $(AB_INC) -w $(PREFIX_MAP)
-AB_HARN  := call tgeneric hooks os hostmmu rcp pi_ledger pif cartboot tload ovl rgn
+AB_HARN  := call tgeneric hooks os hostmmu rcp pi_ledger pif flashram cartboot tload ovl rgn
 AB_CS    := $(CS_SRCS)
 # Audio: the game's voices on AICA channels (harness/alist_aica.c)
 AB_AUD   := $(AB)/h/rsp_audio.o $(AB)/h/alist_decode.o $(AB)/h/audio_aica.o $(AB)/h/alist_aica.o $(AB)/h/aica_voice.o \
@@ -41,7 +41,7 @@ AB_OBJS  := $(addprefix $(AB)/h/,$(addsuffix .o,$(AB_HARN)) fiber.o $(HLE_OBJS))
             $(AB)/cs/sigdb.o $(AB)/cs/hooktab.o $(addprefix $(AB)/x/,$(addsuffix .o,$(XL_PARTS))) $(AB)/x/xlpack.o \
             $(AB)/x/xlz.o $(RAB_KOS) \
             $(AB_STATS) $(addprefix $(AB)/k/,play_stats.o cartsrc_reader.o cartboot_kos.o loading.o romcache.o mapleraw.o \
-            dcsim.o cartlink.o dcmmu.o pvr.o vmupak.o vmulcd.o tmu1.o)
+            dcsim.o cartlink.o dcmmu.o pvr.o vmupak.o cartflash.o vmulcd.o tmu1.o)
 # The live builds open on the Dreamcart 64 menu (dc64_menu.c), and their exit combo restarts into it: dc64_entry.S
 # snapshots .data as the ELF entry, and dc64_restart.c takes arch_abort's last call
 DC64_LD      := -Wl,-e,_dc64_entry '-Wl,--defsym=_dc64_data_lo=ADDR(.data)' -Wl,--wrap=arch_real_exit

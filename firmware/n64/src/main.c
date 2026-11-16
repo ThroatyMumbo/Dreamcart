@@ -7,6 +7,7 @@
 #include "cic.h"
 #include "cart_diag.h"
 #include "cart_eeprom.h"
+#include "cart_flashram.h"
 #include "cart_sram.h"
 #include "cart_info.h"
 #include "cart_pass.h"
@@ -46,6 +47,22 @@ static bool __not_in_flash_func(n64_sync)(uint32_t op, uint32_t a, uint32_t b) {
 static void __not_in_flash_func(n64_info)(uint32_t *w) {
     cart_pass_info(w);
     xcache_info(&w[CART_INFO(N64_MI_XC)], &w[CART_INFO(N64_MI_XC_BYTES)]);
+    uint32_t id[2];
+    cart_flashram_id(id);
+    w[CART_INFO(N64_MI_SAVE_ID0)] = id[0], w[CART_INFO(N64_MI_SAVE_ID1)] = id[1];
+}
+
+// The cart's save: its EEPROM through cart_sram's RAM copy, or its FlashRAM passed through to the chip
+static uint32_t __not_in_flash_func(n64_save_size)(void) { return cart_flashram_present() ? FRAM_BYTES : cart_sram_size(); }
+static bool __not_in_flash_func(n64_save_read)(uint32_t off, uint32_t len, uint8_t *dst) {
+    return cart_flashram_present() ? fram_read(off, len, dst) : cart_sram_read(off, len, dst);
+}
+static bool __not_in_flash_func(n64_save_write)(uint32_t off, uint32_t len, const uint8_t *src) {
+    return cart_flashram_present() ? fram_write(off, len, src) : cart_eeprom_write(off, len, src);
+}
+static void __not_in_flash_func(n64_save_status)(uint32_t *pending, uint32_t *given_up) {
+    if (cart_flashram_present()) fram_status(pending, given_up);
+    else cart_sram_status(pending, given_up);
 }
 
 static const xcache_cfg_t g_xcache = { PSRAM_XC_INDEX, PSRAM_XC_STAGE, cart_header_title };
@@ -55,10 +72,10 @@ static const maple_cart_t g_cart = {
     .rom_span    = 64u << 20,       // cart domain 1 address 2; past it is other cart address space
     .read        = cart_stream_read,
     .crc         = crc_dma,
-    .save_size   = cart_sram_size,
-    .save_read   = cart_sram_read,
-    .save_write  = cart_eeprom_write,
-    .save_status = cart_sram_status,
+    .save_size   = n64_save_size,
+    .save_read   = n64_save_read,
+    .save_write  = n64_save_write,
+    .save_status = n64_save_status,
     .rom_size    = cart_rom_size,
     .tables_size = cart_tables_size,
     .tables_read = cart_tables_read,
@@ -92,6 +109,7 @@ int main(void) {
     cart_attach();  // after boot_done: it reads flash, outside the boot watchdog's window
     sd_wait_hook = cart_stream_service;  // an SD write's card busy would otherwise leave core1 no ROM to serve
     xcache_init(&g_xcache);
+    cart_power_ready();
 
     console_add(n64_commands, n64_ncommands);
     console_add(maple_commands, maple_ncommands);
@@ -102,6 +120,7 @@ int main(void) {
     for (;;) {
         cart_stream_service();
         cart_sram_service();
+        cart_flashram_service();
         cart_pass_service();
         xcache_service();
         cart_power_service();

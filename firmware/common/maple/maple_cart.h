@@ -7,7 +7,7 @@
 #define MAPLE_CART_DEFAULT_LEN  512u
 #define MAPLE_CART_MAX_LEN      1012u           // KOS's 255-word receive limit, less func and offset
 #define MAPLE_CART_SPACES       (CART_SPACE_SAVE | CART_SPACE_TABLES | CART_SPACE_CACHE | CART_SPACE_XCACHE)
-#define MAPLE_CART_INFO_WORDS   6u
+#define MAPLE_CART_INFO_WORDS   8u
 
 // FILE_ERR codes
 #define MAPLE_CART_BAD_ARG      0x02u

@@ -20,7 +20,9 @@ bool cart_power_off(void);
 int cart_power_on(void);  // finds the reader, powers the cart on if it is off, then probes as cart_link_probe
 // ROM bytes in z64 order; false once a fetch fails.
 bool cart_read(uint32_t off, void *dst, uint32_t len);
-// The cart's save chip (EEPROM): size in bytes (0 if none), whole-word reads, one 8-byte block per write.
+// The cart's save chip: size in bytes (0 if none), whole-word reads, whole-word writes of up to CART_SAVE_WRITE_MAX
+// (one EEPROM block, or one FlashRAM page). Both wait while the reader answers NOT_READY.
+#define CART_SAVE_WRITE_MAX 128u
 uint32_t cart_save_size(void);
 uint32_t cart_rom_size(void);   // ROM bytes as the adapter probed them; 0 from older firmware
 bool cart_save_read(uint32_t off, void *dst, uint32_t len);

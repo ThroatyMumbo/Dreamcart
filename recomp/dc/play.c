@@ -17,6 +17,8 @@
 #include "gfx_pvr.h"
 #include "romcache.h"
 #include "vmupak.h"
+#include "cartflash.h"
+#include "flashram.h"
 #include "tmpl.h"
 #include "drivers.h"
 #ifdef DC64_MENU
@@ -186,6 +188,11 @@ static void load_cart_save(void) {
         pif_no_eeprom();
         return;
     }
+    if (size == FLASH_BYTES) {
+        pif_no_eeprom();
+        if (!cartflash_open()) play_abort("the cart's FlashRAM didn't load");
+        return;
+    }
     if (size != 512 && size != sizeof save) {
         printf("play: the cart's save chip is %lu bytes; the PIF models 4 and 16 Kbit EEPROMs\n", (unsigned long)size);
         play_abort("unsupported save chip");
@@ -199,11 +206,13 @@ static void load_cart_save(void) {
 // The pak's last writes reach the VMU before an exit or a restart into the menu
 static void exit_combo(void) {
     vmupak_flush();
+    cartflash_flush();
     if (combo_next) combo_next();
 }
 
 static void exit_deadline(void) {
     vmupak_flush();
+    cartflash_flush();
     if (deadline_next) deadline_next();
 }
 
@@ -217,9 +226,16 @@ static int cart_rom(uint32_t off, void *dst, uint32_t len) {
     return ok;
 }
 
+// The largest block malloc can hand out: the top chunk plus what sbrk has left below KOS's kernel stack
+static uint32_t heap_largest(void) {
+    uint32_t brk = (uint32_t)mm_sbrk(0), lim = _arch_mem_top - THD_KERNEL_STACK_SIZE;
+    return mallinfo().keepcost + (lim > brk ? lim - brk : 0);
+}
+
 uint32_t play_heap_to_romcache(uint32_t keep) {
-    uint32_t heap = 0, spare = HEAP_SPARE + keep;
-    for (uint32_t n = 0x800000u; n > spare; n -= 0x10000u) {
+    uint32_t heap = 0, spare = HEAP_SPARE + keep, top = heap_largest();
+    top = top >= 0x810000u ? 0x800000u : top >= 0x20000u ? (top & ~0xFFFFu) - 0x10000u : 0;  // each failed try prints a line
+    for (uint32_t n = top; n > spare; n -= 0x10000u) {
         void *p = malloc(n);
         if (!p) continue;
         free(p);

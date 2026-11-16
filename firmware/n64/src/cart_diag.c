@@ -97,15 +97,19 @@ void cart_diag_addr_lines(void) {
     if (!bad) printf("address lines: all of A1..A%d change the data\n", top);
 }
 
-// the ROM ends at the first 1 MB step where every AD line floats, or the boot code mirrors
-uint32_t cart_diag_probe_size(void) {
+static bool past_end(uint32_t off, uint32_t k) {
     static uint16_t base[64], probe[64];
-    n64_bus_read_words(CART_ROM + 0x40, base, 64);
+    if (float_mask(CART_ROM + off + k) == 0xFFFFu) return true;
+    n64_bus_read_words(CART_ROM + k + 0x40, base, 64);
+    n64_bus_read_words(CART_ROM + off + k + 0x40, probe, 64);
+    return memcmp(base, probe, sizeof base) == 0;
+}
+
+// The ROM ends at the first 1 MB step that floats or mirrors at three points; one glitched read once cut a 64 MB cart to 18
+uint32_t cart_diag_probe_size(void) {
     for (uint32_t mb = 1; mb < ROM_MB_MAX; mb++) {
         uint32_t off = mb << 20;
-        if (float_mask(CART_ROM + off) == 0xFFFFu) return off;
-        n64_bus_read_words(CART_ROM + off + 0x40, probe, 64);
-        if (memcmp(base, probe, sizeof base) == 0) return off;
+        if (past_end(off, 0) && past_end(off, 0x40000u) && past_end(off, 0x80000u)) return off;
     }
     return ROM_LIMIT;
 }

@@ -7,6 +7,7 @@
 #include "pi_ledger.h"
 #include "ovl.h"
 #include "pif.h"
+#include "flashram.h"
 
 #define RDRAM_SIZE RDRAM_BYTES
 #define VI_NTSC_HZ 48681812ull
@@ -206,8 +207,23 @@ static void pi_dma_quirks(uint32_t dram, uint32_t off, uint32_t length) {
     }
 }
 
+static void pi_done_at(uint32_t len) {
+    pi_busy = 1;
+    rcp_schedule(os_now() + PI_SETUP_COUNTS + (unsigned long long)len * PI_COUNTS_PER_BYTE, MI_INTR_PI);
+}
+
+// The save chip's DMAs, either way; only FlashRAM is modeled on domain 2
+static void pi_flash_dma(uint32_t v, int to_cart) {
+    uint32_t dram = regs[B_PI][0] & 0x00FFFFFE, cart = regs[B_PI][1] & ~1u, len = (v & 0x00FFFFFF) + 1;
+    if (pi_busy) os_die("rcp: PI DMA started while another is in flight", cart);
+    if (to_cart) flash_dma_write(dram, cart - FLASH_BASE, len);
+    else flash_dma_read(dram, cart - FLASH_BASE, len);
+    pi_done_at(len);
+}
+
 static void pi_dma(uint32_t v) {
     uint32_t dram = regs[B_PI][0] & 0x00FFFFFE, cart = regs[B_PI][1] & ~1u, len = (v & 0x00FFFFFF) + 1;
+    if (flash_claims(cart)) { pi_flash_dma(v, 0); return; }
     if (pi_busy) os_die("rcp: PI DMA started while another is in flight", cart);
     if (cart < 0x10000000 || cart >= 0x1FC00000)
         os_die("rcp: PI DMA outside cart ROM (SRAM, FlashRAM and 64DD are the save layer)", cart);
@@ -491,7 +507,11 @@ static void reg_wr(uint32_t phys, uint32_t v) {
         if (r == 3) { mi_intr &= ~MI_INTR_AI; return; }
         break;
     case B_PI:
-        if (r == 2) os_die("rcp: PI_RD_LEN write (RDRAM to cart: SRAM and FlashRAM are the save layer)", v);
+        if (r == 2) {
+            if (!flash_claims(regs[B_PI][1] & ~1u)) os_die("rcp: PI_RD_LEN write (RDRAM to cart: SRAM is the save layer)", v);
+            pi_flash_dma(v, 1);
+            return;
+        }
         if (r == 3) { pi_dma(v); return; }
         if (r == 4) { if (v & 2) mi_intr &= ~MI_INTR_PI; return; }
         break;
@@ -514,6 +534,7 @@ uint32_t rcp_rd(uint32_t phys, int size) {
     if (phys >= 0x04000000 && phys < 0x04002000) return sp_word(phys);
     if (phys >= 0x04000000 && phys < 0x04900000) return reg_rd(phys);
     if (phys >= 0x05000000 && phys < 0x08000000) return (phys & 0xFFFF) | phys << 16;  // no 64DD: PI open bus, as ares
+    if (flash_claims(phys)) return flash_rd(phys);
     if (phys >= 0x10000000 && phys < 0x10000040) return cart_info.header[(phys >> 2) & 15];
     if (phys >= 0x10000040 && phys < 0x1FC00000 && cart_read_fn) {
         uint8_t w[4];
@@ -540,6 +561,7 @@ void rcp_wr(uint32_t phys, uint32_t v, int size) {
     if (phys >= 0x04000000 && phys < 0x04002000) { sp_set_word(phys, v); return; }
     if (phys >= 0x04000000 && phys < 0x04900000) { reg_wr(phys, v); return; }
     if (phys >= 0x1FC007C0 && phys < 0x1FC00800) { pif_ram[(phys >> 2) & 15] = v; return; }
+    if (flash_claims(phys)) { flash_wr(phys, v); return; }
     if (phys >= 0x1FD00000 && phys < 0x80000000) return;
     os_die("rcp: write outside the modeled bus (cart and PIF are the next layer)", phys);
 }

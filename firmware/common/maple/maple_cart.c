@@ -6,7 +6,13 @@ static int file_err(uint8_t *payload, uint8_t *resp, uint32_t code) {
     return 4;
 }
 
-// Lands in the reader's RAM copy; the cart itself is written behind it.
+// An in-range save request the callback refused is one the reader can't take yet, not a bad one
+static bool save_in_range(const maple_cart_t *cart, uint32_t off, uint32_t n) {
+    uint32_t size = cart->save_size ? cart->save_size() : 0;
+    return n <= size && off <= size - n;
+}
+
+// Lands in the reader's RAM copy, or for a pass-through chip its queue; the cart itself is written behind it.
 static int save_write(const maple_cart_t *cart, const uint8_t *req, unsigned req_len,
                       uint8_t *payload, uint8_t *resp) {
     if (!maple_has_words(req, req_len, 3)) { return MAPLE_REPLY_NONE; }
@@ -21,7 +27,11 @@ static int save_write(const maple_cart_t *cart, const uint8_t *req, unsigned req
         : (off & MAPLE_CART_SPACES) == CART_SPACE_XCACHE ? cart->xcache_write : 0;
     if (!write || !n || !cart->crc) { return file_err(payload, resp, MAPLE_CART_BAD_ARG); }
     if (cart->crc(src, n) != want) { return file_err(payload, resp, MAPLE_CART_CRC_BAD); }
-    if (!write(off & ~MAPLE_CART_SPACES, n, src)) { return file_err(payload, resp, MAPLE_CART_BAD_ARG); }
+    uint32_t o = off & ~MAPLE_CART_SPACES;
+    if (!write(o, n, src)) {
+        return file_err(payload, resp, write == cart->save_write && save_in_range(cart, o, n) ? MAPLE_CART_NOT_READY
+                                                                                              : MAPLE_CART_BAD_ARG);
+    }
     *resp = MAPLE_CMD_RESP_ACK;
     return 0;
 }
@@ -63,7 +73,8 @@ static int block_read(const maple_cart_t *cart, uint32_t func, const uint8_t *re
     uint32_t space = off & MAPLE_CART_SPACES, o = off & ~MAPLE_CART_SPACES;
     if (space == CART_SPACE_SAVE) {
         if (!cart->save_read || !cart->save_read(o, n, payload + 8)) {
-            return file_err(payload, resp, MAPLE_CART_BAD_ARG);
+            return file_err(payload, resp, cart->save_read && save_in_range(cart, o, n) ? MAPLE_CART_NOT_READY
+                                                                                        : MAPLE_CART_BAD_ARG);
         }
     } else if (space == CART_SPACE_TABLES || space == CART_SPACE_CACHE || space == CART_SPACE_XCACHE) {
         uint32_t (*size_fn)(void) = space == CART_SPACE_TABLES ? cart->tables_size

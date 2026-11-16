@@ -250,11 +250,26 @@ static uint32_t l_rom_size(void) {
     return 0;
 }
 
+#define SAVE_BUSY_MS   500   // a FlashRAM page's erase and program; the reader answers NOT_READY meanwhile
+#define CART_NOT_READY 0x10u // maple_cart.h's MAPLE_CART_NOT_READY
+
+// A save request the reader can't take yet: false once that has gone on for SAVE_BUSY_MS, else waits a little
+static bool save_busy(const mr_reply_t *r, uint64_t t0) {
+    uint32_t code;
+    if (r->response != MAPLE_RESPONSE_FILEERR || r->nbytes < 4) return false;
+    memcpy(&code, r->data, 4);
+    if (cart_word(code) != CART_NOT_READY || timer_ms_gettime64() - t0 > SAVE_BUSY_MS) return false;
+    thd_sleep(1);
+    return true;
+}
+
 static bool save_read_chunk(uint32_t off, uint8_t *dst, uint32_t n) {
     static mr_reply_t r;
     const uint32_t args[4] = { g_func, cart_word(CART_SPACE_SAVE | off), cart_word(n), cart_word(CART_READ_CRC) };
+    uint64_t t0 = timer_ms_gettime64();
     for (int t = 0; t < SAVE_TRIES; t++) {
         if (mr_xact(g_port, g_unit, MAPLE_COMMAND_BREAD, args, 4, &r) != 0) continue;
+        if (save_busy(&r, t0)) { t--; continue; }
         if (r.response != MAPLE_RESPONSE_DATATRF || r.data_len != 3u + n / 4u) continue;
         uint32_t echo, crc;
         memcpy(&echo, r.data + 4, 4);
@@ -400,15 +415,17 @@ bool cart_rom_is_z64(void) { return g_swap == SWAP_NONE; }
 
 static bool l_save_write(uint32_t off, const void *src, uint32_t len) {
     static mr_reply_t r;
-    uint32_t args[3 + 8];
-    if (!g_open || len != 8 || (off & 7)) return false;
+    uint32_t args[3 + CART_SAVE_WRITE_MAX / 4];
+    if (!g_open || !len || len > CART_SAVE_WRITE_MAX || ((off | len) & 3)) return false;
     args[0] = g_func;
     args[1] = cart_word(CART_SPACE_SAVE | off);
     args[2] = cart_word(cart_crc32(src, len));
     memcpy(args + 3, src, len);
+    uint64_t t0 = timer_ms_gettime64();
     for (int t = 0; t < SAVE_TRIES; t++) {
         if (mr_xact(g_port, g_unit, MAPLE_COMMAND_BWRITE, args, 3 + (int)(len / 4), &r) != 0) continue;
         if (r.response == MAPLE_RESPONSE_NONE) continue;
+        if (save_busy(&r, t0)) { t--; continue; }
         return r.response == MAPLE_RESPONSE_OK;
     }
     return false;

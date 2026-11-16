@@ -8,6 +8,7 @@
 #include "cart_info.h"
 #include "cart_diag.h"
 #include "cart_eeprom.h"
+#include "cart_flashram.h"
 #include "cart_sram.h"
 #include "cart_pass.h"
 #include "cart_stream.h"
@@ -23,7 +24,7 @@
 #define NPINS      (PIN_CART_LAST + 1)
 _Static_assert(CART_STREAM_BLOCK == N64_BUS_BURST, "the ROM stream reads whole bus bursts");
 
-static volatile bool g_ready = true, g_off;
+static volatile bool g_ready, g_off;  // not ready until main's first attach has found the save
 static volatile uint8_t g_req;  // a BLOCK_SYNC power op core1 took, until core0 has carried it out
 static struct { gpio_function_t fn; bool up, down; } g_pins[NPINS];
 
@@ -48,6 +49,12 @@ void cart_attach(void) {
     uint8_t h[CART_HDR_LEN];
     cart_header_read(h);
     xcache_set_cart(h, cart_rom_size());
+    cart_flashram_attach(!cart_sram_size());
+}
+
+void cart_power_ready(void) {
+    __dmb();
+    g_ready = true;
 }
 
 bool __not_in_flash_func(cart_ready)(void) { return g_ready; }
@@ -80,8 +87,11 @@ static void report(void) {
     }
     char title[21];
     cart_header_title(h, title);
-    printf("cart \"%s\", %lu MB, eeprom %lu bytes, scan cache %s\n", title, (unsigned long)cart_rom_mb(),
-           (unsigned long)cart_sram_size(), cart_cache_size() ? "loaded" : "none");
+    char save[40];
+    if (cart_flashram_present()) snprintf(save, sizeof save, "flashram %s", cart_flashram_name());
+    else snprintf(save, sizeof save, "eeprom %lu bytes", (unsigned long)cart_sram_size());
+    printf("cart \"%s\", %lu MB, %s, scan cache %s\n", title, (unsigned long)cart_rom_mb(), save,
+           cart_cache_size() ? "loaded" : "none");
 }
 
 static void power_down(void) {
@@ -89,6 +99,7 @@ static void power_down(void) {
     g_ready = false;
     sleep_ms(QUIESCE_MS);
     if (!cart_sram_flush(2000)) printf("eeprom: writes still pending after 2 s, dropped\n");
+    cart_flashram_service_idle();
     cart_pass_stop();
     n64_bus_set_reset(false);
     sleep_ms(1);
