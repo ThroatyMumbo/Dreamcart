@@ -2,6 +2,7 @@
 #include "pico/stdlib.h"
 #include "pico/stdio.h"
 #include "pico/stdio_uart.h"
+#include "hardware/uart.h"
 #include "fault.h"
 #include "console.h"
 
@@ -22,23 +23,31 @@ static void run(const char *line) {
     if (!line[0]) return;
     const char *arg = line + 1;
     while (*arg == ' ') arg++;
+    if (line[0] == '?') { help(); return; }
     for (unsigned t = 0; t < g_ntables; t++) {
         for (unsigned i = 0; i < g_tables[t].n; i++) {
             if (g_tables[t].cmds[i].key == line[0]) { g_tables[t].cmds[i].run(arg); return; }
         }
     }
-    help();
+    printf("unknown, ? for help\n");  // short: a long reply couples glitches back into RX
+}
+
+// The UART's own TX couples glitches into RX (GP40 next to GP41): what came in during a reply is dropped
+static void rx_drain(void) {
+    while (uart_is_readable(uart_default)) (void)uart_getc(uart_default);
 }
 
 void console_poll(void) {
     static char line[64];
     static int n = 0;
-    static bool prompted = false;
+    static bool prompted = false, noisy = false;
 
     if (!prompted) {
         MARK(10);
         printf("> ");
         stdio_flush();
+        uart_tx_wait_blocking(uart_default);
+        rx_drain();
         prompted = true;
     }
     int c = getchar_timeout_us(0);
@@ -47,12 +56,15 @@ void console_poll(void) {
         line[n] = 0;
         n = 0;
         printf("\n");
-        run(line);
+        if (noisy) printf("dropped, the line had glitch bytes\n");
+        else run(line);
+        noisy = false;
         prompted = false;
         return;
     }
     if (c == 8 || c == 127) { if (n) { n--; printf("\b \b"); } return; }
-    if (c > 0 && n < (int)sizeof line - 1) { line[n++] = (char)c; putchar(c); }
+    if (c < 0x20 || c > 0x7E) { noisy = true; return; }
+    if (n < (int)sizeof line - 1) { line[n++] = (char)c; putchar(c); }
 }
 
 void console_wait_enter(void) {

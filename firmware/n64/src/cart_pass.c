@@ -15,7 +15,7 @@
 
 #define JR_RA        0x03E00008u
 #define MAX_PAD      8
-#define MAX_STARTS   12288u
+#define MAX_STARTS   131072u      // Pokemon Stadium 2 (64 MB) overflowed 12288
 #define BLOCK        N64_BUS_BURST
 #define BLOCKS_TURN  8u           // per main-loop turn, so the ROM ring still refills between them
 #define SLOTS        4u
@@ -79,8 +79,8 @@ void cart_pass_init(void) {
 
 // cs_feed's rules exactly: a start is 8 bytes past a jr ra, moved past up to 8 zero words
 static void start_found(uint32_t k) {
-    if (g_nstarts == MAX_STARTS) { g_pass = PASS_FAILED; return; }
-    g_starts[g_nstarts++] = g_pend_p[k];
+    if (g_nstarts < MAX_STARTS) g_starts[g_nstarts++] = g_pend_p[k];
+    else g_pass = PASS_FAILED;  // the pending still goes: pass_word's loop revisits k until it does
     g_pend_p[k] = g_pend_p[g_npend - 1], g_pend_n[k] = g_pend_n[g_npend - 1];
     g_npend--;
 }

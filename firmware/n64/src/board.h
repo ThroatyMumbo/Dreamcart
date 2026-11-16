@@ -24,6 +24,6 @@
 #define FRAM_CMD     0x08010000u
 
 // Who owns which PSRAM bytes
-#define PSRAM_PASS_STARTS 0x00000000u   // the whole-ROM pass: its jr ra starts, 48 KB
-#define PSRAM_XC_INDEX    0x00010000u   // SD translation cache: the card's index, mirrored, 128 KB
-#define PSRAM_XC_STAGE    0x00040000u   // SD translation cache: the entry in flight, to the end of PSRAM
+#define PSRAM_PASS_STARTS 0x00000000u   // the whole-ROM pass: its jr ra starts, 512 KB
+#define PSRAM_XC_INDEX    0x00080000u   // SD translation cache: the card's index, mirrored, 128 KB
+#define PSRAM_XC_STAGE    0x000A0000u   // SD translation cache: the entry in flight, to the end of PSRAM

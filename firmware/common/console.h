@@ -7,7 +7,7 @@ typedef struct {
     void (*run)(const char *arg);   // the rest of the line, leading spaces skipped
 } console_cmd_t;
 
-// The UART line console. Unknown keys and '?' print every entry's help, tables in the order added.
+// The UART line console. '?' prints every entry's help, tables in the order added; a line with glitch bytes is dropped.
 #define CONSOLE_MAX_TABLES 5
 void console_add(const console_cmd_t *cmds, unsigned n);
 void console_poll(void);            // core0 main loop; never blocks
