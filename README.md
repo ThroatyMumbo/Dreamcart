@@ -107,7 +107,7 @@ Of the N64 games I own and have tested:
 | Cruis'n USA | Yes |
 | Cruis'n World | Yes |
 | Elmo's Number Journey | Yes |
-| Pokémon Stadium 2 | No |
+| Pokémon Stadium 2 | Barely |
 | Donkey Kong 64 | No |
 
 For SNES and Genesis it's up to what the emulators support. I've tested Donkey Kong Country, Super Mario All Stars, and Mortal Kombat II (on Genesis). The only issues have been sound-related.
